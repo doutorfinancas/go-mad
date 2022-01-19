@@ -3,7 +3,7 @@ package main
 import (
 	"github.com/DrSmithFr/go-console/pkg/input/argument"
 	"github.com/DrSmithFr/go-console/pkg/input/option"
-	"github.com/bolovsky/go-mad/core"
+	"github.com/doutorfinancas/go-mad/core"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/bolovsky/go-mad
+module github.com/doutorfinancas/go-mad
 
 go 1.17
 
