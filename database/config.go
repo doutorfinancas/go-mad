@@ -1,25 +1,45 @@
 package database
 
 import (
-	"gopkg.in/yaml.v3"
+	"github.com/go-sql-driver/mysql"
+	"time"
 )
 
-type Rules struct {
-	Rewrite map[string]Rewrite `yaml:"rewrite" json:"rewrite"`
-	NoData  []string           `yaml:"nodata"  json:"nodata"`
-	Ignore  []string           `yaml:"ignore"  json:"ignore"`
-	Where   map[string]string  `yaml:"where"   json:"where"`
+type Config struct {
+	Host     string
+	Port     string
+	Database string
+	User     string
+	Pass     string
 }
 
-type Rewrite map[string]string
+func NewConfig(
+	user string,
+	pass string,
+	host string,
+	port string,
+	database string) Config {
+	return Config{
+		Host:     host,
+		Port:     port,
+		Database: database,
+		User:     user,
+		Pass:     pass,
+	}
+}
 
-func Load(b []byte) (Rules, error) {
-	var rules Rules
-
-	err := yaml.Unmarshal(b, &rules)
-	if err != nil {
-		return rules, err
+func (c Config) ConnectionString() string {
+	var config = mysql.Config{
+		Loc:                  time.UTC,
+		DBName:               c.Database,
+		User:                 c.User,
+		Passwd:               c.Pass,
+		Net:                  "tcp",
+		Addr:                 c.Host + ":" + c.Port,
+		ParseTime:            true,
+		AllowNativePasswords: true,
+		CheckConnLiveness:    true,
 	}
 
-	return rules, nil
+	return config.FormatDSN()
 }
