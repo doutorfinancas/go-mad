@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/doutorfinancas/go-mad/core"
+	"github.com/doutorfinancas/go-mad/generator"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gobwas/glob"
 	"go.uber.org/zap"
@@ -29,6 +30,7 @@ type mySql struct {
 	quick             bool
 	singleTransaction bool
 	addLocks          bool
+	randomizerService generator.Service
 }
 
 const (
@@ -37,7 +39,7 @@ const (
 	NoDataMapPlacement = "nodata"
 )
 
-func NewMySQLDumper(db *sql.DB, logger *zap.Logger, options ...Option) (MySql, error) {
+func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.Service, options ...Option) (MySql, error) {
 	m := &mySql{
 		db:                db,
 		log:               logger,
@@ -46,6 +48,7 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, options ...Option) (MySql, e
 		singleTransaction: false,
 		lockTables:        true,
 		addLocks:          true,
+		randomizerService: randomizerService,
 	}
 
 	err := parseMysqlOptions(m, options)
@@ -295,8 +298,7 @@ func (d *mySql) dumpTableData(w io.Writer, table string) (err error) {
 				val = fmt.Sprintf("'%s'", escape(string(*col)))
 			}
 
-			// @todo need to inject faker usage here
-
+			val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
 			vals = append(vals, val)
 		}
 
