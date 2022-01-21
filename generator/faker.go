@@ -3,10 +3,11 @@ package generator
 import (
 	"errors"
 	"fmt"
-	"github.com/jaswdr/faker"
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/jaswdr/faker"
 )
 
 type Service interface {
@@ -16,6 +17,11 @@ type Service interface {
 type service struct {
 	faker faker.Faker
 }
+
+const (
+	FakerShortLen = 2
+	IntBitSize    = 64
+)
 
 func NewService() Service {
 	return &service{
@@ -41,7 +47,7 @@ func (s service) ReplaceStringWithFakerWhenRequested(request string) (string, er
 		return "", err
 	}
 
-	if len(a) == 2 {
+	if len(a) == FakerShortLen {
 		return stringify(res[0]), nil
 	}
 
@@ -52,7 +58,11 @@ func (s service) ReplaceStringWithFakerWhenRequested(request string) (string, er
 	args, err := getMethodArguments(
 		obj,
 		argsString[0],
-		strings.Replace(argsString[1], ")", "", -1))
+		strings.Replace(argsString[1], ")", "", -1),
+	)
+	if err != nil {
+		return "", err
+	}
 	// faker as a max depth of 2, here should be last
 	// @todo this analysis should be dynamic
 	if res, err = callMethod(obj, argsString[0], args); err != nil {
@@ -80,13 +90,12 @@ func getMethodArguments(
 	args := strings.Split(argsString, ",")
 
 	if len(args) != method.Type().NumIn() {
-		return nil, errors.New(
-			fmt.Sprintf(
-				"number of arguments to call %s is %d and we got %d",
-				name,
-				method.Type().NumIn(),
-				len(args),
-			))
+		return nil, fmt.Errorf(
+			"number of arguments to call %s is %d and we got %d",
+			name,
+			method.Type().NumIn(),
+			len(args),
+		)
 	}
 
 	in := make([]reflect.Value, method.Type().NumIn())
@@ -126,12 +135,13 @@ func stringify(v interface{}) string {
 }
 
 func convert(t reflect.Type, s string) interface{} {
+	// nolint
 	switch t.Kind() {
 	case reflect.Int, reflect.Int64:
 		v, _ := strconv.Atoi(s)
 		return v
 	case reflect.Float64, reflect.Float32:
-		v, _ := strconv.ParseFloat(s, 64)
+		v, _ := strconv.ParseFloat(s, IntBitSize)
 		return v
 	default:
 		return s

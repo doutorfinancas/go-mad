@@ -2,20 +2,20 @@ package cmd
 
 import (
 	"database/sql"
+	"io"
+	"os"
+
 	"github.com/doutorfinancas/go-mad/core"
 	"github.com/doutorfinancas/go-mad/database"
 	"github.com/doutorfinancas/go-mad/generator"
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
-	"io"
-	"io/ioutil"
-	"os"
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "dump",
-	Short: "MySql Anonymized Dump",
+	Short: "MySQL Anonymized Dump",
 	Long: `A full fledged anonymized dump facility that allows some compatibility
 				with mysql original flags for mysqldump`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -30,14 +30,16 @@ var rootCmd = &cobra.Command{
 			if err != nil {
 				logger.Fatal(
 					err.Error(),
-					zap.String("step", "logger initialization"))
+					zap.String("step", "logger initialization"),
+				)
 			}
 		}(logger) // flushes buffer, if any
 
 		if len(args) != 1 {
 			logger.Fatal(
 				"database is required",
-				zap.String("step", "arguments initialization"))
+				zap.String("step", "arguments initialization"),
+			)
 		}
 
 		logger.Sugar()
@@ -47,7 +49,8 @@ var rootCmd = &cobra.Command{
 				if len(input) < 1 {
 					logger.Fatal(
 						"password flag is set, so it is required",
-						zap.String("step", "arguments initialization"))
+						zap.String("step", "arguments initialization"),
+					)
 				}
 				return nil
 			}
@@ -62,7 +65,8 @@ var rootCmd = &cobra.Command{
 			if err != nil {
 				logger.Fatal(
 					"password flag was set and was failed to be parsed",
-					zap.String("step", "arguments initialization"))
+					zap.String("step", "arguments initialization"),
+				)
 			}
 
 			pwd = res
@@ -74,32 +78,42 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			logger.Fatal(
 				err.Error(),
-				zap.String("step", "database initialization"))
+				zap.String("step", "database initialization"),
+			)
 		}
 
 		service := generator.NewService()
 		dumper, err := database.NewMySQLDumper(db, logger, service)
+		if err != nil {
+			logger.Fatal(
+				err.Error(),
+				zap.String("step", "config initialization"),
+			)
+		}
 
 		if configFilePath != "" {
-			d, err := ioutil.ReadFile(configFilePath)
-			if err != nil {
+			d, dErr := os.ReadFile(configFilePath)
+			if dErr != nil {
 				logger.Fatal(
-					err.Error(),
-					zap.String("step", "config initialization"))
+					dErr.Error(),
+					zap.String("step", "config initialization"),
+				)
 			}
 
-			pConf, err := core.Load(d)
-			if err != nil {
+			pConf, loadErr := core.Load(d)
+			if loadErr != nil {
 				logger.Fatal(
-					err.Error(),
-					zap.String("step", "config loading"))
+					loadErr.Error(),
+					zap.String("step", "config loading"),
+				)
 			}
 			dumper.SetSelectMap(pConf.RewriteToMap())
 			dumper.SetWhereMap(pConf.WhereToMap())
-			if err := dumper.SetFilterMap(pConf.NoData, pConf.Ignore); err != nil {
+			if dErr := dumper.SetFilterMap(pConf.NoData, pConf.Ignore); dErr != nil {
 				logger.Fatal(
-					err.Error(),
-					zap.String("step", "config loading"))
+					dErr.Error(),
+					zap.String("step", "config loading"),
+				)
 			}
 		}
 
@@ -111,14 +125,16 @@ var rootCmd = &cobra.Command{
 			if w, err = os.Create(outputPath); err != nil {
 				logger.Fatal(
 					err.Error(),
-					zap.String("step", "file initialization"))
+					zap.String("step", "file initialization"),
+				)
 			}
 		}
 
 		if err = dumper.Dump(w); err != nil {
 			logger.Error(
 				err.Error(),
-				zap.String("step", "dump process"))
+				zap.String("step", "dump process"),
+			)
 		}
 	},
 }
@@ -143,90 +159,104 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+// nolint
 func init() {
 	rootCmd.PersistentFlags().StringVarP(
 		&hostname,
 		"host",
 		"h",
 		"127.0.0.1",
-		"hostname or ip where machine is located")
+		"hostname or ip where machine is located",
+	)
 
 	rootCmd.PersistentFlags().StringVarP(
 		&pwd,
 		"password",
 		"p",
 		"this_is_an_empty_password",
-		"insert you password, though direct command line usage is supported, it can be insecure")
+		"insert you password, though direct command line usage is supported, it can be insecure",
+	)
 
 	rootCmd.PersistentFlags().StringVarP(
 		&user,
 		"user",
 		"u",
 		"",
-		"username to connect to the database")
+		"username to connect to the database",
+	)
 
 	rootCmd.PersistentFlags().StringVarP(
 		&port,
 		"port",
 		"P",
 		"3306",
-		"port to connect to the database")
+		"port to connect to the database",
+	)
 
 	rootCmd.PersistentFlags().StringVarP(
 		&configFilePath,
 		"config",
 		"c",
 		"",
-		"filepath to configuration")
+		"filepath to configuration",
+	)
 
 	rootCmd.PersistentFlags().StringVarP(
 		&outputPath,
 		"output",
 		"o",
 		"stdout",
-		"filepath to output, defaults to stdout")
+		"filepath to output, defaults to stdout",
+	)
 
 	rootCmd.PersistentFlags().StringVar(
 		&charset,
 		"set-charset",
 		"utf8",
-		"chartset to be used for database connection and respective dump")
+		"chartset to be used for database connection and respective dump",
+	)
 
 	rootCmd.PersistentFlags().BoolVarP(
 		&debug,
 		"debug",
 		"v",
 		false,
-		"use verbose mode")
+		"use verbose mode",
+	)
 
 	rootCmd.PersistentFlags().BoolVarP(
 		&quiet,
 		"quiet",
 		"q",
 		false,
-		"use silent mode")
+		"use silent mode",
+	)
 
 	rootCmd.PersistentFlags().BoolVar(
 		&skipLockTables,
 		"skip-lock-tables",
 		false,
-		"use silent mode")
+		"use silent mode",
+	)
 
 	rootCmd.PersistentFlags().BoolVar(
 		&singleTransaction,
 		"single-transaction",
 		false,
-		"use silent mode")
+		"use silent mode",
+	)
 
 	rootCmd.PersistentFlags().BoolVar(
 		&quick,
 		"quick",
 		false,
-		"dump rows one line at a time, useful for large tables")
+		"dump rows one line at a time, useful for large tables",
+	)
 
 	rootCmd.PersistentFlags().BoolVar(
 		&addLocks,
 		"add-locks",
 		false,
-		"add lock statements to dump")
+		"add lock statements to dump",
+	)
 }

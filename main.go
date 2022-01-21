@@ -1,7 +1,14 @@
 package main
 
-import "github.com/doutorfinancas/go-mad/cmd"
+import (
+	"log"
+
+	"github.com/doutorfinancas/go-mad/cmd"
+)
 
 func main() {
-	cmd.Execute()
+	err := cmd.Execute()
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 }

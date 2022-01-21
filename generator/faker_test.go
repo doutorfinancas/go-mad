@@ -1,8 +1,9 @@
 package generator
 
 import (
-	"github.com/jaswdr/faker"
 	"testing"
+
+	"github.com/jaswdr/faker"
 )
 
 func Test_service_ReplaceStringWithFakerWhenRequested(t *testing.T) {
@@ -51,18 +52,20 @@ func Test_service_ReplaceStringWithFakerWhenRequested(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := service{
-				faker: tt.fields.faker,
-			}
-			got, err := s.ReplaceStringWithFakerWhenRequested(tt.args.request)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ReplaceStringWithFakerWhenRequested() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.want(got) {
-				t.Errorf("ReplaceStringWithFakerWhenRequested() got = %v, %s", got, tt.errMsg)
-			}
-		})
+		t.Run(
+			tt.name, func(t *testing.T) {
+				s := service{
+					faker: tt.fields.faker,
+				}
+				got, err := s.ReplaceStringWithFakerWhenRequested(tt.args.request)
+				if (err != nil) != tt.wantErr {
+					t.Errorf("ReplaceStringWithFakerWhenRequested() error = %v, wantErr %v", err, tt.wantErr)
+					return
+				}
+				if !tt.want(got) {
+					t.Errorf("ReplaceStringWithFakerWhenRequested() got = %v, %s", got, tt.errMsg)
+				}
+			},
+		)
 	}
 }

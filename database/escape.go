@@ -2,7 +2,6 @@ package database
 
 import (
 	"bytes"
-	"io"
 )
 
 func escape(str string) string {
@@ -28,10 +27,10 @@ func escape(str string) string {
 		default:
 			continue
 		}
-		_, _ = io.WriteString(&buf, str[last:i])
-		_, _ = io.WriteString(&buf, esc)
+		_, _ = buf.WriteString(str[last:i])
+		_, _ = buf.WriteString(esc)
 		last = i + 1
 	}
-	_, _ = io.WriteString(&buf, str[last:])
+	_, _ = buf.WriteString(str[last:])
 	return buf.String()
 }

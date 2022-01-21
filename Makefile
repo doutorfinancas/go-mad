@@ -1,0 +1,13 @@
+.PHONY: hook-setup
+hook-setup:
+	pre-commit install
+
+.PHONY: test
+test:
+	TEST_MODE=full go test -v ./...
+	go vet -printf=false ./...
+
+.PHONY: test-cover
+test-cover:
+	TEST_MODE=full go test -cover -v ./...
+	go vet -printf=false ./...
