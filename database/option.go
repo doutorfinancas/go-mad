@@ -1,15 +1,19 @@
 package database
 
+import (
+	"errors"
+)
+
 type Option struct {
 	key   string
 	value string
 }
 
-func OptionValue(key string, value string) Option {
+func OptionValue(key, value string) Option {
 	return Option{key: key, value: value}
 }
 
-func parseMysqlOptions(m *mySql, options []Option) error {
+func parseMysqlOptions(m *mySQL, options []Option) error {
 	for _, v := range options {
 		switch v.key {
 		case "set-charset":
@@ -20,6 +24,8 @@ func parseMysqlOptions(m *mySql, options []Option) error {
 			m.singleTransaction = true
 		case "skip-lock-tables":
 			m.lockTables = false
+		default:
+			return errors.New("unknown option")
 		}
 	}
 	return nil

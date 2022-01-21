@@ -3,23 +3,24 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"github.com/doutorfinancas/go-mad/core"
-	"github.com/doutorfinancas/go-mad/generator"
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/gobwas/glob"
-	"go.uber.org/zap"
 	"io"
 	"strings"
+
+	"github.com/doutorfinancas/go-mad/core"
+	"github.com/doutorfinancas/go-mad/generator"
+	_ "github.com/go-sql-driver/mysql" // adds mysql database
+	"github.com/gobwas/glob"
+	"go.uber.org/zap"
 )
 
-type MySql interface {
+type MySQL interface {
 	Dump(w io.Writer) (err error)
 	SetSelectMap(map[string]map[string]string)
 	SetWhereMap(map[string]string)
 	SetFilterMap(noData []string, ignore []string) error
 }
 
-type mySql struct {
+type mySQL struct {
 	db                *sql.DB
 	log               *zap.Logger
 	selectMap         map[string]map[string]string
@@ -31,6 +32,7 @@ type mySql struct {
 	singleTransaction bool
 	addLocks          bool
 	randomizerService generator.Service
+	openTx            *sql.Tx
 }
 
 const (
@@ -39,8 +41,11 @@ const (
 	NoDataMapPlacement = "nodata"
 )
 
-func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.Service, options ...Option) (MySql, error) {
-	m := &mySql{
+func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.Service, options ...Option) (
+	MySQL,
+	error,
+) {
+	m := &mySQL{
 		db:                db,
 		log:               logger,
 		quick:             false,
@@ -59,37 +64,26 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 	return m, nil
 }
 
-func (d *mySql) SetSelectMap(m map[string]map[string]string) {
+func (d *mySQL) SetSelectMap(m map[string]map[string]string) {
 	d.selectMap = m
 }
 
-func (d *mySql) SetWhereMap(m map[string]string) {
+func (d *mySQL) SetWhereMap(m map[string]string) {
 	d.whereMap = m
 }
 
-func (d *mySql) SetFilterMap(noData []string, ignore []string) error {
+func (d *mySQL) SetFilterMap(noData, ignore []string) error {
 	d.filterMap = make(map[string]string)
 
 	t, err := d.getTables()
 	if err != nil {
 		return err
 	}
-
-	nd, err := d.listTables(t, noData)
-	if err != nil {
-		return err
-	}
-
-	for _, table := range nd {
+	for _, table := range d.listTables(t, noData) {
 		d.filterMap[table] = NoDataMapPlacement
 	}
 
-	ign, err := d.listTables(t, ignore)
-	if err != nil {
-		return err
-	}
-
-	for _, table := range ign {
+	for _, table := range d.listTables(t, ignore) {
 		d.filterMap[table] = IgnoreMapPlacement
 	}
 
@@ -98,92 +92,54 @@ func (d *mySql) SetFilterMap(noData []string, ignore []string) error {
 
 // Dump creates a MySQL dump and writes it to an io.Writer
 // returns error in the event something gos wrong in the middle of the dump process
-func (d *mySql) Dump(w io.Writer) error {
-	_, err := fmt.Fprintf(w, "SET NAMES %s;\n", d.charset)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(w, "SET FOREIGN_KEY_CHECKS = 0;\n")
-	if err != nil {
-		return err
-	}
+func (d *mySQL) Dump(w io.Writer) error {
+	var dump string
+	var tmp string
+	dump = fmt.Sprintf("SET NAMES %s;\n", d.charset)
+	dump += "SET FOREIGN_KEY_CHECKS = 0;\n"
 
-	var tx *sql.Tx
-
-	if d.singleTransaction {
-		tx, err = d.db.Begin()
-		if err != nil {
-			return err
-		}
-	}
-
-	d.log.Debug("retrieving table list")
 	tables, err := d.getTables()
 	if err != nil {
 		return err
 	}
 
 	for _, table := range tables {
-		if d.filterMap[strings.ToLower(table)] != IgnoreMapPlacement {
-			skipData := d.filterMap[strings.ToLower(table)] == NoDataMapPlacement
-			if !skipData && d.lockTables {
-				_, err = d.mysqlLockTableRead(table)
-				if err != nil {
-					return err
-				}
-				_, err = d.mysqlFlushTable(table)
-				if err != nil {
-					return err
-				}
-			}
-			var dump string
-			if dump, err = d.getCreateTableStatement(w, table); err != nil {
+		if d.filterMap[strings.ToLower(table)] == IgnoreMapPlacement {
+			continue
+		}
+
+		skipData := d.filterMap[strings.ToLower(table)] == NoDataMapPlacement
+		if !skipData && d.lockTables {
+			_, err = d.mysqlLockTableRead(table)
+			if err != nil {
 				return err
 			}
-
-			if !skipData {
-
-				var cnt uint64
-				dump, cnt, err = d.getTableHeader(table)
-				if err != nil {
-					return err
-				}
-				if cnt > 0 {
-					if d.addLocks {
-						dump = d.getLockTableWriteStatement(table)
-					}
-
-					// before the data dump, we need to flush everything to file
-					if _, err = fmt.Fprintln(w, dump); err != nil {
-						return err
-					}
-					// and after flush we need to clear the variable
-					dump = ""
-
-					if err := d.dumpTableData(w, table); err != nil {
-						return err
-					}
-
-					if d.addLocks {
-						dump = dump + d.getUnlockTablesStatement()
-					}
-
-					if d.lockTables {
-						if _, err := d.mysqlUnlockTables(); err != nil {
-							return err
-						}
-					}
-				}
+			_, err = d.mysqlFlushTable(table)
+			if err != nil {
+				return err
 			}
+		}
 
-			if _, err = fmt.Fprintln(w, dump); err != nil {
-				d.log.Error(err.Error())
+		tmp, err = d.getCreateTableStatement(table)
+		if err != nil {
+			return err
+		}
+
+		dump += tmp
+		if !skipData {
+			dump, err = d.dumpData(w, dump, table)
+			if err != nil {
+				return err
 			}
+		}
+
+		if _, err = fmt.Fprintln(w, dump); err != nil {
+			d.log.Error(err.Error())
 		}
 	}
 
 	if d.singleTransaction {
-		err = tx.Commit()
+		err = d.openTx.Commit()
 		if err != nil {
 			// we actually don't require this commit to be performed
 			// just making sure everything is fine with the transaction
@@ -196,7 +152,46 @@ func (d *mySql) Dump(w io.Writer) error {
 	return err
 }
 
-func (d *mySql) listTables(tables []string, globs []string) ([]string, error) {
+func (d *mySQL) dumpData(w io.Writer, dump, table string) (string, error) {
+	var cnt uint64
+	var tmp string
+	var err error
+	tmp, cnt, err = d.getTableHeader(table)
+	if err != nil {
+		return "", err
+	}
+	dump += tmp
+	if cnt > 0 {
+		if d.addLocks {
+			dump += d.getLockTableWriteStatement(table)
+		}
+
+		// before the data dump, we need to flush everything to file
+		if _, err = fmt.Fprintln(w, dump); err != nil {
+			return "", err
+		}
+		// and after flush we need to clear the variable
+		dump = ""
+
+		if dErr := d.dumpTableData(w, table); dErr != nil {
+			return "", dErr
+		}
+
+		if d.addLocks {
+			dump += d.getUnlockTablesStatement()
+		}
+
+		if d.lockTables {
+			if _, dErr := d.mysqlUnlockTables(); err != nil {
+				return "", dErr
+			}
+		}
+	}
+
+	return dump, nil
+}
+
+func (d *mySQL) listTables(tables, globs []string) []string {
 	var globbed []string
 
 	for _, query := range globs {
@@ -209,20 +204,22 @@ func (d *mySql) listTables(tables []string, globs []string) ([]string, error) {
 		}
 	}
 
-	return globbed, nil
+	return globbed
 }
 
-func (d *mySql) getTables() (tables []string, err error) {
-	tables = make([]string, 0)
-	var rows *sql.Rows
-	if rows, err = d.db.Query("SHOW FULL TABLES"); err != nil {
-		return
+func (d *mySQL) getTables() ([]string, error) {
+	tables := make([]string, 0)
+
+	rows, err := d.db.Query("SHOW FULL TABLES")
+	if a := d.evaluateErrors(err, rows.Err()); a != nil {
+		return tables, a
 	}
 
 	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-			d.log.Error(err.Error(),
+		dErr := rows.Close()
+		if dErr != nil {
+			d.log.Error(
+				dErr.Error(),
 				zap.String("internal", "failed to close rows while getting tables"),
 			)
 		}
@@ -232,7 +229,7 @@ func (d *mySql) getTables() (tables []string, err error) {
 		var tableName, tableType string
 
 		if err = rows.Scan(&tableName, &tableType); err != nil {
-			return
+			return tables, nil
 		}
 
 		if tableType == "BASE TABLE" {
@@ -240,37 +237,23 @@ func (d *mySql) getTables() (tables []string, err error) {
 		}
 	}
 
-	return
+	return tables, nil
 }
 
-func (d *mySql) getCreateTableStatement(w io.Writer, table string) (string, error) {
-	d.log.Debug("dumping structure for table",
-		zap.String("table", table))
-	s := fmt.Sprintf("\n--\n-- Structure for table `%s`\n--\n\n", table)
-	s += fmt.Sprintf("DROP TABLE IF EXISTS `%s`;\n", table)
-	row := d.db.QueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`", table))
-	var tname, ddl string
-	if err := row.Scan(&tname, &ddl); err != nil {
-		return "", err
-	}
-	s += fmt.Sprintf("%s;\n", ddl)
-	return s, nil
-}
-
-func (d *mySql) dumpTableData(w io.Writer, table string) (err error) {
-	d.log.Debug("dumping data for table",
-		zap.String("table", table))
+func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 	rows, columns, err := d.selectAllDataFor(table)
-	if err != nil {
-		return
+	if a := d.evaluateErrors(err, rows.Err()); a != nil {
+		return a
 	}
+
 	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
+		dErr := rows.Close()
+		if dErr != nil {
 			d.log.Error(
-				err.Error(),
+				dErr.Error(),
 				zap.String("table", table),
-				zap.String("context", "dumping data, closing rows failed"))
+				zap.String("context", "dumping data, closing rows failed"),
+			)
 		}
 	}(rows)
 
@@ -288,8 +271,8 @@ func (d *mySql) dumpTableData(w io.Writer, table string) (err error) {
 	query := fmt.Sprintf("INSERT INTO `%s` VALUES", table)
 	var data []string
 	for rows.Next() {
-		if err = rows.Scan(scanArgs...); err != nil {
-			return err
+		if dErr := rows.Scan(scanArgs...); err != nil {
+			return dErr
 		}
 		var vals []string
 		for _, col := range values {
@@ -313,22 +296,34 @@ func (d *mySql) dumpTableData(w io.Writer, table string) (err error) {
 		fmt.Fprintf(w, "%s\n%s;\n", query, strings.Join(data, ",\n"))
 	}
 
-	return
+	return nil
 }
 
-func (d *mySql) getTableHeader(table string) (string, uint64, error) {
-	s := fmt.Sprintf("\n--\n-- Data for table `%s`", table)
-	count, err := d.rowCount(table)
+func (d *mySQL) getTableHeader(table string) (str string, count uint64, err error) {
+	str = fmt.Sprintf("\n--\n-- Data for table `%s`", table)
+	count, err = d.rowCount(table)
 
 	if err != nil {
 		return "", 0, err
 	}
 
-	s = s + fmt.Sprintf(" -- %d rows\n--\n\n", count)
-	return s, count, nil
+	str += fmt.Sprintf(" -- %d rows\n--\n\n", count)
+	return
 }
 
-func (d *mySql) selectAllDataFor(table string) (rows *sql.Rows, columns []string, err error) {
+func (d *mySQL) evaluateErrors(base, mysql error) error {
+	if base != nil {
+		return base
+	}
+
+	if mysql != nil {
+		return mysql
+	}
+
+	return nil
+}
+
+func (d *mySQL) selectAllDataFor(table string) (rows *sql.Rows, columns []string, err error) {
 	var selectQuery string
 	if selectQuery, err = d.getSelectQueryFor(table); err != nil {
 		return
@@ -342,29 +337,39 @@ func (d *mySql) selectAllDataFor(table string) (rows *sql.Rows, columns []string
 	return
 }
 
-func (d *mySql) rowCount(table string) (count uint64, err error) {
-	query := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
+func (d *mySQL) getSelectQueryFor(table string) (query string, err error) {
+	cols, err := d.getColumnsForSelect(table)
+	if err != nil {
+		return "", err
+	}
+	query = fmt.Sprintf("SELECT %s FROM `%s`", strings.Join(cols, ", "), table)
 	if where, ok := d.whereMap[strings.ToLower(table)]; ok {
 		query = fmt.Sprintf("%s WHERE %s", query, where)
-	}
-	row := d.db.QueryRow(query)
-	if err = row.Scan(&count); err != nil {
-		return
 	}
 	return
 }
 
-func (d *mySql) getColumnsForSelect(table string) (columns []string, err error) {
-	var rows *sql.Rows
-	if rows, err = d.db.Query(fmt.Sprintf("SELECT * FROM `%s` LIMIT 1", table)); err != nil {
-		return
+func (d *mySQL) getLockTableWriteStatement(table string) string {
+	return fmt.Sprintf("LOCK TABLES `%s` WRITE;\n", table)
+}
+
+func (d *mySQL) getUnlockTablesStatement() string {
+	return "UNLOCK TABLES;\n"
+}
+
+func (d *mySQL) getColumnsForSelect(table string) (columns []string, err error) {
+	rows, err := d.db.Query(fmt.Sprintf("SELECT * FROM `%s` LIMIT 1", table))
+	if a := d.evaluateErrors(err, rows.Err()); a != nil {
+		return columns, a
 	}
+
 	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
+		dErr := rows.Close()
+		if dErr != nil {
 			d.log.Warn(
-				err.Error(),
-				zap.String("table", table))
+				dErr.Error(),
+				zap.String("table", table),
+			)
 		}
 	}(rows)
 	if columns, err = rows.Columns(); err != nil {
@@ -381,43 +386,70 @@ func (d *mySql) getColumnsForSelect(table string) (columns []string, err error) 
 	return
 }
 
-func (d *mySql) getSelectQueryFor(table string) (query string, err error) {
-	cols, err := d.getColumnsForSelect(table)
-	if err != nil {
-		return "", err
-	}
-	query = fmt.Sprintf("SELECT %s FROM `%s`", strings.Join(cols, ", "), table)
+func (d *mySQL) rowCount(table string) (count uint64, err error) {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
 	if where, ok := d.whereMap[strings.ToLower(table)]; ok {
 		query = fmt.Sprintf("%s WHERE %s", query, where)
+	}
+	row := d.useTransactionOrDBQueryRow(query)
+	if err = row.Scan(&count); err != nil {
+		return
 	}
 	return
 }
 
-func (d *mySql) getLockTableWriteStatement(table string) string {
-	return fmt.Sprintf("LOCK TABLES `%s` WRITE;\n", table)
+func (d *mySQL) getCreateTableStatement(table string) (string, error) {
+	d.log.Debug(
+		"dumping structure for table",
+		zap.String("table", table),
+	)
+	s := fmt.Sprintf("\n--\n-- Structure for table `%s`\n--\n\n", table)
+	s += fmt.Sprintf("DROP TABLE IF EXISTS `%s`;\n", table)
+	row := d.useTransactionOrDBQueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`", table))
+	var tname, ddl string
+	if err := row.Scan(&tname, &ddl); err != nil {
+		return "", err
+	}
+	s += fmt.Sprintf("%s;\n", ddl)
+	return s, nil
 }
 
-func (d *mySql) getUnlockTablesStatement() string {
-	return "UNLOCK TABLES;\n"
+func (d *mySQL) mysqlLockTableRead(table string) (sql.Result, error) {
+	return d.useTransactionOrDBExec(fmt.Sprintf("LOCK TABLES `%s` READ", table))
 }
-
-func (d *mySql) mysqlLockTableRead(table string) (sql.Result, error) {
-	d.log.Debug("locking table",
-		zap.String("table", table),
-		zap.String("action", "read lock"))
-	return d.db.Exec(fmt.Sprintf("LOCK TABLES `%s` READ", table))
-}
-func (d *mySql) mysqlFlushTable(table string) (sql.Result, error) {
-	d.log.Debug("flushing table",
-		zap.String("table", table),
-		zap.String("action", "flush"))
-	return d.db.Exec(fmt.Sprintf("FLUSH TABLES `%s`", table))
+func (d *mySQL) mysqlFlushTable(table string) (sql.Result, error) {
+	return d.useTransactionOrDBExec(fmt.Sprintf("FLUSH TABLES `%s`", table))
 }
 
 // Release the global read locks
-func (d *mySql) mysqlUnlockTables() (sql.Result, error) {
-	d.log.Debug("unlocking tables",
-		zap.String("table", "all"),
-		zap.String("action", "unlock"))
-	return d.db.Exec(fmt.Sprintf("UNLOCK TABLES"))
+func (d *mySQL) mysqlUnlockTables() (sql.Result, error) {
+	return d.useTransactionOrDBExec("UNLOCK TABLES")
+}
+
+func (d *mySQL) useTransactionOrDBQueryRow(query string) *sql.Row {
+	if d.singleTransaction {
+		return d.getTransaction().QueryRow(query)
+	}
+
+	return d.db.QueryRow(query)
+}
+
+func (d *mySQL) useTransactionOrDBExec(query string) (sql.Result, error) {
+	if d.singleTransaction {
+		return d.getTransaction().Exec(query)
+	}
+
+	return d.db.Exec(query)
+}
+
+func (d *mySQL) getTransaction() *sql.Tx {
+	if d.openTx == nil {
+		var err error
+		d.openTx, err = d.db.Begin()
+		if err != nil {
+			panic("could not start a transaction")
+		}
+	}
+
+	return d.openTx
 }

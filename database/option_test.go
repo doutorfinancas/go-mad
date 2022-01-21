@@ -9,8 +9,8 @@ import (
 func TestOption(t *testing.T) {
 	var testCases = []struct {
 		options []Option
-		mysql   *mySql
-		want    *mySql
+		mysql   *mySQL
+		want    *mySQL
 		comment string
 	}{
 		{
@@ -20,8 +20,8 @@ func TestOption(t *testing.T) {
 				{"single-transaction", ""},
 				{"skip-lock-tables", ""},
 			},
-			&mySql{},
-			&mySql{
+			&mySQL{},
+			&mySQL{
 				quick:             true,
 				charset:           "utf8mb4",
 				singleTransaction: true,
@@ -31,8 +31,8 @@ func TestOption(t *testing.T) {
 		},
 		{
 			[]Option{},
-			&mySql{},
-			&mySql{},
+			&mySQL{},
+			&mySQL{},
 			"default",
 		},
 	}

@@ -1,8 +1,9 @@
 package database
 
 import (
-	"github.com/go-sql-driver/mysql"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 type Config struct {
@@ -18,7 +19,8 @@ func NewConfig(
 	pass string,
 	host string,
 	port string,
-	database string) Config {
+	database string,
+) Config {
 	return Config{
 		Host:     host,
 		Port:     port,
@@ -28,7 +30,7 @@ func NewConfig(
 	}
 }
 
-func (c Config) ConnectionString() string {
+func (c *Config) ConnectionString() string {
 	var config = mysql.Config{
 		Loc:                  time.UTC,
 		DBName:               c.Database,
