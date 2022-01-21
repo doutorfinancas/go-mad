@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"github.com/doutorfinancas/go-mad/core"
 	"github.com/doutorfinancas/go-mad/database"
+	"github.com/doutorfinancas/go-mad/generator"
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -76,7 +77,8 @@ var rootCmd = &cobra.Command{
 				zap.String("step", "database initialization"))
 		}
 
-		dumper, err := database.NewMySQLDumper(db, logger)
+		service := generator.NewService()
+		dumper, err := database.NewMySQLDumper(db, logger, service)
 
 		if configFilePath != "" {
 			d, err := ioutil.ReadFile(configFilePath)
