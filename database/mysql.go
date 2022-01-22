@@ -211,7 +211,7 @@ func (d *mySQL) getTables() ([]string, error) {
 	tables := make([]string, 0)
 
 	rows, err := d.db.Query("SHOW FULL TABLES")
-	if a := d.evaluateErrors(err, rows.Err()); a != nil {
+	if a := d.evaluateErrors(err, rows); a != nil {
 		return tables, a
 	}
 
@@ -228,8 +228,8 @@ func (d *mySQL) getTables() ([]string, error) {
 	for rows.Next() {
 		var tableName, tableType string
 
-		if err = rows.Scan(&tableName, &tableType); err != nil {
-			return tables, nil
+		if dErr := rows.Scan(&tableName, &tableType); dErr != nil {
+			return tables, dErr
 		}
 
 		if tableType == "BASE TABLE" {
@@ -242,7 +242,7 @@ func (d *mySQL) getTables() ([]string, error) {
 
 func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 	rows, columns, err := d.selectAllDataFor(table)
-	if a := d.evaluateErrors(err, rows.Err()); a != nil {
+	if a := d.evaluateErrors(err, rows); a != nil {
 		return a
 	}
 
@@ -311,13 +311,13 @@ func (d *mySQL) getTableHeader(table string) (str string, count uint64, err erro
 	return
 }
 
-func (d *mySQL) evaluateErrors(base, mysql error) error {
+func (d *mySQL) evaluateErrors(base error, rows *sql.Rows) error {
 	if base != nil {
 		return base
 	}
 
-	if mysql != nil {
-		return mysql
+	if rows != nil && rows.Err() != nil {
+		return rows.Err()
 	}
 
 	return nil
@@ -359,7 +359,7 @@ func (d *mySQL) getUnlockTablesStatement() string {
 
 func (d *mySQL) getColumnsForSelect(table string) (columns []string, err error) {
 	rows, err := d.db.Query(fmt.Sprintf("SELECT * FROM `%s` LIMIT 1", table))
-	if a := d.evaluateErrors(err, rows.Err()); a != nil {
+	if a := d.evaluateErrors(err, rows); a != nil {
 		return columns, a
 	}
 
@@ -399,10 +399,6 @@ func (d *mySQL) rowCount(table string) (count uint64, err error) {
 }
 
 func (d *mySQL) getCreateTableStatement(table string) (string, error) {
-	d.log.Debug(
-		"dumping structure for table",
-		zap.String("table", table),
-	)
 	s := fmt.Sprintf("\n--\n-- Structure for table `%s`\n--\n\n", table)
 	s += fmt.Sprintf("DROP TABLE IF EXISTS `%s`;\n", table)
 	row := d.useTransactionOrDBQueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`", table))

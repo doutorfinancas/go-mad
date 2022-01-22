@@ -34,14 +34,3 @@ func (r Rules) RewriteToMap() map[string]map[string]string {
 
 	return selectMap
 }
-
-// WhereToMap list for conditional row exports in the MySQL dump.
-func (r Rules) WhereToMap() map[string]string {
-	whereMap := make(map[string]string)
-
-	for table, condition := range r.Where {
-		whereMap[table] = condition
-	}
-
-	return whereMap
-}

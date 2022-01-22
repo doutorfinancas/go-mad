@@ -12,13 +12,14 @@ func TestOption(t *testing.T) {
 		mysql   *mySQL
 		want    *mySQL
 		comment string
+		wantErr bool
 	}{
 		{
 			[]Option{
-				{"set-charset", "utf8mb4"},
-				{"quick", ""},
-				{"single-transaction", ""},
-				{"skip-lock-tables", ""},
+				OptionValue("set-charset", "utf8mb4"),
+				OptionValue("quick", ""),
+				OptionValue("single-transaction", ""),
+				OptionValue("skip-lock-tables", ""),
 			},
 			&mySQL{},
 			&mySQL{
@@ -28,17 +29,31 @@ func TestOption(t *testing.T) {
 				lockTables:        false,
 			},
 			"switch all cases",
+			false,
 		},
 		{
 			[]Option{},
 			&mySQL{},
 			&mySQL{},
 			"default",
+			false,
+		},
+		{
+			[]Option{
+				OptionValue("not-really-an-option", "nor a value"),
+			},
+			&mySQL{},
+			&mySQL{},
+			"default",
+			true,
 		},
 	}
-	for _, testCase := range testCases {
-		err := parseMysqlOptions(testCase.mysql, testCase.options)
-		assert.Nil(t, err)
-		assert.Equal(t, testCase.want, testCase.mysql, testCase.comment)
+	for _, tt := range testCases {
+		err := parseMysqlOptions(tt.mysql, tt.options)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("TestOption() error = %v, wantErr %v", err, tt.wantErr)
+			return
+		}
+		assert.Equal(t, tt.want, tt.mysql, tt.comment)
 	}
 }

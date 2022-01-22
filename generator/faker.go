@@ -21,6 +21,7 @@ type service struct {
 const (
 	FakerShortLen = 2
 	IntBitSize    = 64
+	ContactInfo   = "ContactInfo"
 )
 
 func NewService() Service {
@@ -43,12 +44,17 @@ func (s service) ReplaceStringWithFakerWhenRequested(request string) (string, er
 	var res []reflect.Value
 	var err error
 
-	if res, err = callMethod(&s.faker, strings.Split(a[1], "(")[0], nil); err != nil {
+	method := strings.Split(a[1], "(")[0]
+	if method == ContactInfo {
+		return request, errors.New("method ContactInfo is not supported")
+	}
+
+	if res, err = callMethod(&s.faker, method, nil); err != nil {
 		return "", err
 	}
 
 	if len(a) == FakerShortLen {
-		return stringify(res[0]), nil
+		return request, errors.New("missing generator function")
 	}
 
 	argsString := strings.Split(a[2], "(")
@@ -145,9 +151,6 @@ func convert(t reflect.Type, s string) interface{} {
 	switch t.Kind() {
 	case reflect.Int, reflect.Int64:
 		v, _ := strconv.Atoi(s)
-		return v
-	case reflect.Float64, reflect.Float32:
-		v, _ := strconv.ParseFloat(s, IntBitSize)
 		return v
 	default:
 		return s
