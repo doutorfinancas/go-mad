@@ -87,6 +87,14 @@ func getMethodArguments(
 	method := reflect.ValueOf(entry).
 		MethodByName(name)
 
+	in := make([]reflect.Value, method.Type().NumIn())
+
+	// we need to skip if we have an empty string, else it fails the lower validation
+	// and function goes kaboom
+	if argsString == "" {
+		return in, nil
+	}
+
 	args := strings.Split(argsString, ",")
 
 	if len(args) != method.Type().NumIn() {
@@ -97,8 +105,6 @@ func getMethodArguments(
 			len(args),
 		)
 	}
-
-	in := make([]reflect.Value, method.Type().NumIn())
 
 	for i := 0; i < method.Type().NumIn(); i++ {
 		t := method.Type().In(i)
