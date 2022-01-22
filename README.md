@@ -14,11 +14,36 @@ Notorious Projects that could do similar:
 
 Usage:
 
+from shell, call:
+```shell
+go-mad dump my_database --config=config_example.yml
+```
+
+The database argument is required. Currently, only exporting one database is supported
+
 you can use either SQL direct commands or faker on rewrites. Else it's compatible with mtk-dump config
 
 please refer to faker documentation [here](https://pkg.go.dev/github.com/jaswdr/faker)
 
-## Example
+## Available Flags (all are optional)
+
+| Flag (short)         | Description                                                          | Type   |
+|----------------------|----------------------------------------------------------------------|--------|
+| --host (-h)          | your MySQL host, default `127.0.0.1`                                 | string |
+| --user (-u)          | your user to authenticate in mysql, no default                       | string |
+| --password (-p)      | password to authenticate in mysql, no default                        | string |
+| --port (-P)          | port to your mysql installation, default `3306`                      | string |
+| --config (-c)        | path to your go-mad config file, example below                       | string |
+| --output (-o)        | path to the intended output file, default STDOUT                     | string |
+| --char-set           | uses SET NAMES command with provided charset, default utf8           | string |
+| --debug (-v)         | turns on verbose mode if passed                                      | bool   |
+| --quiet (-q          | disables log output if passed                                        | bool   |
+| --skip-lock-tables   | skips locking mysql tables when dumping                              | bool   |
+| --single-transaction | does the dump within a single transaction by issuing a BEGIN Command | bool   |
+| --quick              | dump writes row by row as opposed to using extended inserts          | bool   |
+| --add-locks          | add write lock statements to the dump                                | bool   |
+
+## Configuration Example
 ```yaml
 rewrite:
   users:
@@ -42,3 +67,8 @@ where:
   users: |-
     id < 5000
 ```
+
+## Next Steps (ToDos)
+[] - Adds support to exporting multiple databases at a time
+[] - Exports run in goroutines to accelerate when `--parallel` is passed
+[] - Feel free to expand this list
