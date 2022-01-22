@@ -83,7 +83,25 @@ var rootCmd = &cobra.Command{
 		}
 
 		service := generator.NewService()
-		dumper, err := database.NewMySQLDumper(db, logger, service)
+		var opt []database.Option
+
+		if quick {
+			opt = append(opt, database.OptionValue("quick", ""))
+		}
+
+		if charset != "" {
+			opt = append(opt, database.OptionValue("set-charset", charset))
+		}
+
+		if singleTransaction {
+			opt = append(opt, database.OptionValue("single-transaction", ""))
+		}
+
+		if skipLockTables {
+			opt = append(opt, database.OptionValue("skip-lock-tables", ""))
+		}
+
+		dumper, err := database.NewMySQLDumper(db, logger, service, opt...)
 		if err != nil {
 			logger.Fatal(
 				err.Error(),
@@ -108,7 +126,7 @@ var rootCmd = &cobra.Command{
 				)
 			}
 			dumper.SetSelectMap(pConf.RewriteToMap())
-			dumper.SetWhereMap(pConf.WhereToMap())
+			dumper.SetWhereMap(pConf.Where)
 			if dErr := dumper.SetFilterMap(pConf.NoData, pConf.Ignore); dErr != nil {
 				logger.Fatal(
 					dErr.Error(),

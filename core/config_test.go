@@ -7,10 +7,13 @@ import (
 )
 
 func TestLoad(t *testing.T) {
+	var rules Rules
+
 	var testCases = []struct {
 		comment string
 		config  []byte
 		want    Rules
+		wantErr bool
 	}{
 		{
 			"ignore",
@@ -23,6 +26,7 @@ func TestLoad(t *testing.T) {
 					"table_to_ignore_2",
 				},
 			},
+			false,
 		},
 		{
 			"nodata",
@@ -37,6 +41,7 @@ func TestLoad(t *testing.T) {
 					"table_struct_only_3",
 				},
 			},
+			false,
 		},
 		{
 			"rewrite",
@@ -52,6 +57,7 @@ func TestLoad(t *testing.T) {
 					},
 				},
 			},
+			false,
 		},
 		{
 			"mixed",
@@ -79,11 +85,63 @@ where:
 					"potatoes": "id > 352",
 				},
 			},
+			false,
+		},
+		{
+			"invalid yaml",
+			[]byte("a: 1\nb: 2\na: 3\n"),
+			rules,
+			true,
 		},
 	}
-	for _, testCase := range testCases {
-		actual, err := Load(testCase.config)
-		assert.Nil(t, err)
-		assert.Equal(t, testCase.want, actual, testCase.comment)
+	for _, tt := range testCases {
+		actual, err := Load(tt.config)
+		if (err != nil) != tt.wantErr {
+			t.Errorf(
+				"TestLoad() error = %v, wantErr %v on %v",
+				err,
+				tt.wantErr,
+				tt.comment,
+			)
+			continue
+		}
+		assert.Equal(t, tt.want, actual, tt.comment)
+	}
+}
+
+func TestRules_RewriteToMap(t *testing.T) {
+	type fields struct {
+		Rewrite map[string]Rewrite
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   map[string]map[string]string
+	}{
+		{
+			"rewrite map test",
+			fields{
+				map[string]Rewrite{
+					"a": {
+						"b": "c",
+					},
+				},
+			},
+			map[string]map[string]string{
+				"a": {
+					"b": "c",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				r := Rules{
+					Rewrite: tt.fields.Rewrite,
+				}
+				assert.Equalf(t, tt.want, r.RewriteToMap(), "RewriteToMap()")
+			},
+		)
 	}
 }
