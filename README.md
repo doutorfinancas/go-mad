@@ -69,6 +69,6 @@ where:
 ```
 
 ## Next Steps (ToDos)
-[] - Adds support to exporting multiple databases at a time
-[] - Exports run in goroutines to accelerate when `--parallel` is passed
-[] - Feel free to expand this list
+- [ ] Adds support to exporting multiple databases at a time
+- [ ] Exports run in goroutines to accelerate when `--parallel` is passed
+- [ ] Feel free to expand this list
