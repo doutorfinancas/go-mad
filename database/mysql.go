@@ -21,18 +21,19 @@ type MySQL interface {
 }
 
 type mySQL struct {
-	db                *sql.DB
-	log               *zap.Logger
-	selectMap         map[string]map[string]string
-	whereMap          map[string]string
-	filterMap         map[string]string
-	lockTables        bool
-	charset           string
-	quick             bool
-	singleTransaction bool
-	addLocks          bool
-	randomizerService generator.Service
-	openTx            *sql.Tx
+	db                  *sql.DB
+	log                 *zap.Logger
+	selectMap           map[string]map[string]string
+	whereMap            map[string]string
+	filterMap           map[string]string
+	lockTables          bool
+	charset             string
+	quick               bool
+	singleTransaction   bool
+	addLocks            bool
+	randomizerService   generator.Service
+	openTx              *sql.Tx
+	extendedInsertLimit int
 }
 
 const (
@@ -46,14 +47,15 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 	error,
 ) {
 	m := &mySQL{
-		db:                db,
-		log:               logger,
-		quick:             false,
-		charset:           "utf8",
-		singleTransaction: false,
-		lockTables:        true,
-		addLocks:          true,
-		randomizerService: randomizerService,
+		db:                  db,
+		log:                 logger,
+		quick:               false,
+		charset:             "utf8",
+		singleTransaction:   false,
+		lockTables:          true,
+		addLocks:            true,
+		extendedInsertLimit: ExtendedInsertRows,
+		randomizerService:   randomizerService,
 	}
 
 	err := parseMysqlOptions(m, options)
@@ -257,7 +259,7 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 		}
 	}(rows)
 
-	numRows := ExtendedInsertRows
+	numRows := d.extendedInsertLimit
 	if d.quick {
 		numRows = 1
 	}

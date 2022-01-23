@@ -182,7 +182,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(
 		&hostname,
 		"host",
-		"h",
+		"H",
 		"127.0.0.1",
 		"hostname or ip where machine is located",
 	)
@@ -276,5 +276,12 @@ func init() {
 		"add-locks",
 		false,
 		"add lock statements to dump",
+	)
+
+	rootCmd.PersistentFlags().StringVar(
+		&port,
+		"insert-into-limit",
+		"100",
+		"limit for the number of rows to go into each insert, cannot be used in conjunction with quick",
 	)
 }
