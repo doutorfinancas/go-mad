@@ -38,7 +38,18 @@ func Test_service_ReplaceStringWithFakerWhenRequested(t *testing.T) {
 			func(s interface{}) bool {
 				return len(s.(string)) > 10
 			},
-			"exact len 10",
+			"more that len 10",
+			false,
+		},
+		{
+			"asciify something",
+			args{
+				"faker.Asciify(\"************\")",
+			},
+			func(s interface{}) bool {
+				return len(s.(string)) > 9
+			},
+			"more that len 9",
 			false,
 		},
 		{
@@ -107,6 +118,28 @@ func Test_service_FakerError(t *testing.T) {
 			"try calling missing method on last level",
 			args{
 				"faker.Person().Yada()",
+			},
+			func(s interface{}) bool {
+				return true
+			},
+			"this should have errored",
+			true,
+		},
+		{
+			"calling function with diff number of args that supposed",
+			args{
+				"faker.Person().Name(\"batatinhas\")",
+			},
+			func(s interface{}) bool {
+				return true
+			},
+			"this should have errored",
+			true,
+		},
+		{
+			"calling ContactInfo which is not supported",
+			args{
+				"faker.ContactInfo()",
 			},
 			func(s interface{}) bool {
 				return true
