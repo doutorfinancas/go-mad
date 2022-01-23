@@ -12,7 +12,16 @@ Notorious Projects that could do similar:
 - [mysqlsuperdump](https://github.com/hgfischer/mysqlsuperdump), but hasn't had updates since 2017
 - [mtk-dump](https://github.com/skpr/mtk) based on the previous, anonymization via query
 
-Usage:
+## Installation
+
+Currently, a version is still not available due to the fact this repo is a work in progress
+but will soon be available (a few days)
+
+```shell
+go install github.com/doutorfinancas/go-mad@latest
+```
+
+## Usage
 
 from shell, call:
 ```shell
