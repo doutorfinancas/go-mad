@@ -49,12 +49,28 @@ func (s service) ReplaceStringWithFakerWhenRequested(request string) (string, er
 		return request, errors.New("method ContactInfo is not supported")
 	}
 
-	if res, err = callMethod(&s.faker, method, nil); err != nil {
-		return "", err
+	if len(a) == FakerShortLen {
+		argsString := strings.Split(a[1], "(")
+
+		args, dErr := getMethodArguments(
+			&s.faker,
+			argsString[0],
+			strings.Replace(argsString[1], ")", "", -1),
+		)
+
+		if dErr != nil {
+			return "", dErr
+		}
+
+		if res, dErr = callMethod(&s.faker, method, args); dErr != nil {
+			return "", dErr
+		}
+
+		return stringify(res[0]), nil
 	}
 
-	if len(a) == FakerShortLen {
-		return request, errors.New("missing generator function")
+	if res, err = callMethod(&s.faker, method, nil); err != nil {
+		return "", err
 	}
 
 	argsString := strings.Split(a[2], "(")
