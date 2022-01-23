@@ -2,6 +2,7 @@ package database
 
 import (
 	"errors"
+	"strconv"
 )
 
 type Option struct {
@@ -24,6 +25,13 @@ func parseMysqlOptions(m *mySQL, options []Option) error {
 			m.singleTransaction = true
 		case "skip-lock-tables":
 			m.lockTables = false
+		case "insert-into-limit":
+			i, err := strconv.Atoi(v.value)
+			if err != nil {
+				return err
+			}
+
+			m.extendedInsertLimit = i
 		default:
 			return errors.New("unknown option")
 		}
