@@ -283,7 +283,9 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 				val = fmt.Sprintf("'%s'", escape(string(*col)))
 			}
 
-			val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
+			if len(val) >= 5 && val[0:5] == "faker" {
+				val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
+			}
 			vals = append(vals, val)
 		}
 
