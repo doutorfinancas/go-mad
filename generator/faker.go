@@ -20,7 +20,6 @@ type service struct {
 
 const (
 	FakerShortLen = 2
-	IntBitSize    = 64
 	ContactInfo   = "ContactInfo"
 )
 

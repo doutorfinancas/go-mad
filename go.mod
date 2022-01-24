@@ -6,6 +6,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gobwas/glob v0.2.3
+	github.com/golang/mock v1.6.0
 	github.com/jaswdr/faker v1.9.0
 	github.com/manifoldco/promptui v0.9.0
 	github.com/spf13/cobra v1.3.0
