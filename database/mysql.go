@@ -111,17 +111,6 @@ func (d *mySQL) Dump(w io.Writer) error {
 		}
 
 		skipData := d.filterMap[strings.ToLower(table)] == NoDataMapPlacement
-		if !skipData && d.lockTables {
-			_, err = d.mysqlLockTableRead(table)
-			if err != nil {
-				return err
-			}
-			_, err = d.mysqlFlushTable(table)
-			if err != nil {
-				return err
-			}
-		}
-
 		tmp, err = d.getCreateTableStatement(table)
 		if err != nil {
 			return err
@@ -158,6 +147,13 @@ func (d *mySQL) dumpData(w io.Writer, dump, table string) (string, error) {
 	var cnt uint64
 	var tmp string
 	var err error
+	if d.lockTables {
+		_, err = d.mysqlFlushTable(table)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	tmp, cnt, err = d.getTableHeader(table)
 	if err != nil {
 		return "", err
@@ -182,11 +178,11 @@ func (d *mySQL) dumpData(w io.Writer, dump, table string) (string, error) {
 		if d.addLocks {
 			dump += d.getUnlockTablesStatement()
 		}
+	}
 
-		if d.lockTables {
-			if _, dErr := d.mysqlUnlockTables(); err != nil {
-				return "", dErr
-			}
+	if d.lockTables {
+		if _, dErr := d.mysqlUnlockTables(); err != nil {
+			return "", dErr
 		}
 	}
 
@@ -279,13 +275,17 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 		var vals []string
 		for _, col := range values {
 			val := "NULL"
+
 			if col != nil {
-				val = fmt.Sprintf("'%s'", escape(string(*col)))
+				val = escape(string(*col))
+
+				if len(val) >= 5 && val[0:5] == "faker" {
+					val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
+				}
+
+				val = fmt.Sprintf("'%s'", val)
 			}
 
-			if len(val) >= 5 && val[0:5] == "faker" {
-				val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
-			}
 			vals = append(vals, val)
 		}
 
@@ -414,11 +414,8 @@ func (d *mySQL) getCreateTableStatement(table string) (string, error) {
 	return s, nil
 }
 
-func (d *mySQL) mysqlLockTableRead(table string) (sql.Result, error) {
-	return d.useTransactionOrDBExec(fmt.Sprintf("LOCK TABLES `%s` READ", table))
-}
 func (d *mySQL) mysqlFlushTable(table string) (sql.Result, error) {
-	return d.useTransactionOrDBExec(fmt.Sprintf("FLUSH TABLES `%s`", table))
+	return d.useTransactionOrDBExec(fmt.Sprintf("FLUSH TABLES `%s` WITH READ LOCK", table))
 }
 
 // Release the global read locks

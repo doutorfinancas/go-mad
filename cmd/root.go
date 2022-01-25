@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/doutorfinancas/go-mad/core"
 	"github.com/doutorfinancas/go-mad/database"
@@ -27,10 +28,10 @@ var rootCmd = &cobra.Command{
 
 		defer func(logger *zap.Logger) {
 			err := logger.Sync()
-			if err != nil {
+			if err != nil && !strings.Contains(err.Error(), "invalid argument") {
 				logger.Fatal(
 					err.Error(),
-					zap.String("step", "logger initialization"),
+					zap.String("step", "logger finalization"),
 				)
 			}
 		}(logger) // flushes buffer, if any
@@ -41,8 +42,6 @@ var rootCmd = &cobra.Command{
 				zap.String("step", "arguments initialization"),
 			)
 		}
-
-		logger.Sugar()
 
 		if pwd == "" && cmd.PersistentFlags().Changed("password") {
 			validate := func(input string) error {
@@ -95,9 +94,14 @@ var rootCmd = &cobra.Command{
 
 		if singleTransaction {
 			opt = append(opt, database.OptionValue("single-transaction", ""))
+			// if we do single-transaction we need to automatically turn skip-lock-tables on
+			// since we rely on FLUSH TABLES `table` WITH READ LOCK, which implicitly commits work
+			// it would ruin the fact that we are within a transaction, by possibly sneaking in data
+			// https://dev.mysql.com/doc/refman/8.0/en/flush.html
+			opt = append(opt, database.OptionValue("skip-lock-tables", ""))
 		}
 
-		if skipLockTables {
+		if skipLockTables && !singleTransaction {
 			opt = append(opt, database.OptionValue("skip-lock-tables", ""))
 		}
 

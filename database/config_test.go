@@ -19,7 +19,7 @@ func TestConfig_ConnectionString(t *testing.T) {
 				"3306",
 				"hydra",
 			),
-			"root:test123@tcp(192.168.55.101:3306)/hydra?parseTime=true&maxAllowedPacket=0",
+			"root:test123@tcp(192.168.55.101:3306)/hydra?maxAllowedPacket=0",
 		},
 	}
 	for _, tt := range tests {
