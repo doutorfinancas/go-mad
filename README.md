@@ -18,7 +18,7 @@ Currently, a version is still not available due to the fact this repo is a work 
 but will soon be available (a few days)
 
 ```shell
-go install github.com/doutorfinancas/go-mad@latest
+go install github.com/doutorfinancas/go-mad@0.1.0
 ```
 
 ## Usage
@@ -27,6 +27,15 @@ from shell, call:
 ```shell
 go-mad dump my_database --config=config_example.yml
 ```
+
+if you are using innodb, then the configurations recommended are:
+```shell
+go-mad dump my_database --config=config_example.yml --single-transaction --quick
+```
+
+It will create a larger dump, but wraps everything around a transaction, disables locks and dumps writes faster
+To reduce insert impact, you can replace the `--quick` with `--insert-into-limit=10` or whichever limit size would be 
+best for you.
 
 The database argument is required. Currently, only exporting one database is supported
 
@@ -82,4 +91,5 @@ where:
 ## Next Steps (ToDos)
 - [ ] Adds support to exporting multiple databases at a time
 - [ ] Exports run in goroutines to accelerate when `--parallel` is passed
+- [ ] Add support for env vars
 - [ ] Feel free to expand this list
