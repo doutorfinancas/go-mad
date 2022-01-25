@@ -38,7 +38,7 @@ func (c *Config) ConnectionString() string {
 		Passwd:               c.Pass,
 		Net:                  "tcp",
 		Addr:                 c.Host + ":" + c.Port,
-		ParseTime:            true,
+		ParseTime:            false,
 		AllowNativePasswords: true,
 		CheckConnLiveness:    true,
 	}

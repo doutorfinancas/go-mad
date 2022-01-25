@@ -31,14 +31,6 @@ func getInternalMySQLInstance(db *sql.DB, randomizerService generator.Service) *
 	return dumper.(*mySQL)
 }
 
-func TestMySQLLockTableRead(t *testing.T) {
-	db, mock := getDB(t)
-	dumper := getInternalMySQLInstance(db, nil)
-	mock.ExpectExec("LOCK TABLES `table` READ").WillReturnResult(sqlmock.NewResult(0, 1))
-	_, err := dumper.mysqlLockTableRead("table")
-	assert.Nil(t, err)
-}
-
 func TestMySQLFlushTable(t *testing.T) {
 	db, mock := getDB(t)
 	dumper := getInternalMySQLInstance(db, nil)
