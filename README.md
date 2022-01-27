@@ -1,7 +1,11 @@
 # Go MAD
 
+[![Latest Release](https://img.shields.io/github/v/release/doutorfinancas/go-mad)](https://github.com/doutorfinancas/go-mad/releases)
 [![CircleCI](https://circleci.com/gh/circleci/circleci-docs.svg?style=shield)](https://circleci.com/gh/doutorfinancas/go-mad)
 [![codecov](https://codecov.io/gh/doutorfinancas/go-mad/branch/master/graph/badge.svg?token=L5D1OP1229)](https://codecov.io/gh/doutorfinancas/go-mad)
+[![Github Actions](https://github.com/doutorfinancas/go-mad/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/doutorfinancas/go-mad/actions)
+[![APACHE-2.0 License](https://img.shields.io/github/license/doutorfinancas/go-mad)](LICENSE)
+
 ## MySQL anonymized dump
 This project aims to have a tool that allows mysql repositories to be quickly dump in an anonymized form.
 
