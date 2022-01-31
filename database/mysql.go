@@ -1,9 +1,12 @@
 package database
 
 import (
+	"bufio"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/doutorfinancas/go-mad/core"
@@ -34,6 +37,8 @@ type mySQL struct {
 	randomizerService   generator.Service
 	openTx              *sql.Tx
 	extendedInsertLimit int
+	mapBins             map[string][]string
+	shouldHexBins       bool
 }
 
 const (
@@ -56,6 +61,8 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 		addLocks:            true,
 		extendedInsertLimit: ExtendedInsertRows,
 		randomizerService:   randomizerService,
+		mapBins:             make(map[string][]string),
+		shouldHexBins:       false,
 	}
 
 	err := parseMysqlOptions(m, options)
@@ -116,6 +123,11 @@ func (d *mySQL) Dump(w io.Writer) error {
 			return err
 		}
 
+		// this will store if a value we might get is supposed to be hexed cause its binary
+		if d.shouldHexBins {
+			d.parseBinaryRelations(table, tmp)
+		}
+
 		dump += tmp
 		if !skipData {
 			dump, err = d.dumpData(w, dump, table)
@@ -141,6 +153,35 @@ func (d *mySQL) Dump(w io.Writer) error {
 
 	_, err = fmt.Fprintf(w, "SET FOREIGN_KEY_CHECKS = 1;\n")
 	return err
+}
+
+func (d *mySQL) parseBinaryRelations(table, createTable string) {
+	// no cache, if it is requested, replace existing entry
+	d.mapBins[table] = make([]string, 0)
+
+	scanner := bufio.NewScanner(strings.NewReader(createTable))
+	for scanner.Scan() {
+		if strings.Contains(strings.ToLower(scanner.Text()), "binary") {
+			r := regexp.MustCompile(".*`(.*)`.*")
+			columnName := r.FindAllStringSubmatch(scanner.Text(), -1)
+
+			if len(columnName) > 0 && len(columnName[0]) > 0 {
+				d.mapBins[table] = append(d.mapBins[table], columnName[0][1])
+			}
+		}
+	}
+}
+
+func (d *mySQL) isColumnBinary(table, columnName string) bool {
+	if val, ok := d.mapBins[table]; ok {
+		for _, b := range val {
+			if b == columnName {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (d *mySQL) dumpData(w io.Writer, dump, table string) (string, error) {
@@ -273,17 +314,21 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 			return dErr
 		}
 		var vals []string
-		for _, col := range values {
+		for i, col := range values {
 			val := "NULL"
 
 			if col != nil {
-				val = escape(string(*col))
+				if d.shouldHexBins && d.isColumnBinary(table, columns[i]) {
+					val = fmt.Sprintf("UNHEX('%s')", hex.EncodeToString(*col))
+				} else {
+					val = escape(string(*col))
 
-				if len(val) >= 5 && val[0:5] == "faker" {
-					val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
+					if len(val) >= 5 && val[0:5] == "faker" {
+						val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
+					}
+
+					val = fmt.Sprintf("'%s'", val)
 				}
-
-				val = fmt.Sprintf("'%s'", val)
 			}
 
 			vals = append(vals, val)

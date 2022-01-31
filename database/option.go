@@ -25,6 +25,8 @@ func parseMysqlOptions(m *mySQL, options []Option) error {
 			m.singleTransaction = true
 		case "skip-lock-tables":
 			m.lockTables = false
+		case "hex-encode":
+			m.shouldHexBins = true
 		case "insert-into-limit":
 			i, err := strconv.Atoi(v.value)
 			if err != nil {

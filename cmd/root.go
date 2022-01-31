@@ -88,6 +88,10 @@ var rootCmd = &cobra.Command{
 			opt = append(opt, database.OptionValue("quick", ""))
 		}
 
+		if hexEncode {
+			opt = append(opt, database.OptionValue("hex-encode", ""))
+		}
+
 		if charset != "" {
 			opt = append(opt, database.OptionValue("set-charset", charset))
 		}
@@ -175,6 +179,7 @@ var (
 	addLocks          bool
 	debug             bool
 	quiet             bool
+	hexEncode         bool
 )
 
 func Execute() error {
@@ -280,6 +285,13 @@ func init() {
 		"add-locks",
 		false,
 		"add lock statements to dump",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&hexEncode,
+		"hex-encode",
+		false,
+		"performs hex encoding and respective decode statement for binary values",
 	)
 
 	rootCmd.PersistentFlags().StringVar(
