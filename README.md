@@ -9,6 +9,11 @@
 ## MySQL anonymized dump
 This project aims to have a tool that allows mysql repositories to be quickly dump in an anonymized form.
 
+![what not to do](img/uh_no.png)
+CommitStrip Illustration - [we all do it, right?](https://www.commitstrip.com/en/2021/12/07/we-all-do-it-right/)
+
+Since we shouldn't, never ever, directly duplicate a production db to QA, testing or dev; this way we can safely perform that regression or performance test.
+
 I have found numerous projects that strive to do somehow the same, but none gave me the tooling that would fit my 
 requirements, which are, have a sort of faker and fill the mysql dump data with them
 
