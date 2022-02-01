@@ -270,3 +270,104 @@ func TestMySQLDumpTableDataHandlingErrorFromSelectAllDataFor(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(err)
 	assert.Equal(t, err, dumper.dumpTableData(buffer, "table"))
 }
+
+func Test_mySQL_parseBinaryRelations(t *testing.T) {
+	db, _ := getDB(t)
+	type args struct {
+		table       string
+		createTable string
+		expectedMap map[string][]string
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{
+			"manage create table successfully",
+			args{
+				"table",
+				`CREATE TABLE ` + "`table`" + ` (
+  ` + "`id`" + ` binary(16) NOT NULL AUTO_INCREMENT,
+  ` + "`s`" + ` char(60) DEFAULT NULL,
+  PRIMARY KEY (` + "`id`" + `)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+				map[string][]string{
+					"table": {"id"},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				d := getInternalMySQLInstance(db, nil)
+				d.parseBinaryRelations(tt.args.table, tt.args.createTable)
+				assert.Equal(t, d.mapBins, tt.args.expectedMap)
+			},
+		)
+	}
+}
+
+func Test_mySQL_isColumnBinary(t *testing.T) {
+	db, _ := getDB(t)
+	type args struct {
+		table      string
+		columnName string
+		m          map[string][]string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			"should get true",
+			args{
+				"table",
+				"id",
+				map[string][]string{
+					"table": {"id"},
+				},
+			},
+			true,
+		},
+		{
+			"should get false",
+			args{
+				"table",
+				"potatoes",
+				map[string][]string{
+					"table": {"id"},
+				},
+			},
+			false,
+		},
+		{
+			"should get false",
+			args{
+				"cabbage",
+				"id",
+				map[string][]string{
+					"table": {"id"},
+				},
+			},
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				d := getInternalMySQLInstance(db, nil)
+				d.mapBins = tt.args.m
+				assert.Equalf(
+					t,
+					tt.want,
+					d.isColumnBinary(tt.args.table, tt.args.columnName),
+					"isColumnBinary(%v, %v)",
+					tt.args.table,
+					tt.args.columnName,
+				)
+			},
+		)
+	}
+}

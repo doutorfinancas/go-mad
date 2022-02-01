@@ -28,7 +28,11 @@ var rootCmd = &cobra.Command{
 
 		defer func(logger *zap.Logger) {
 			err := logger.Sync()
-			if err != nil && !strings.Contains(err.Error(), "invalid argument") {
+			if err != nil &&
+				(!strings.Contains(err.Error(), "invalid argument") && !strings.Contains(
+					err.Error(),
+					"inappropriate ioctl for device",
+				)) {
 				logger.Fatal(
 					err.Error(),
 					zap.String("step", "logger finalization"),
@@ -86,6 +90,10 @@ var rootCmd = &cobra.Command{
 
 		if quick {
 			opt = append(opt, database.OptionValue("quick", ""))
+		}
+
+		if hexEncode {
+			opt = append(opt, database.OptionValue("hex-encode", ""))
 		}
 
 		if charset != "" {
@@ -175,6 +183,7 @@ var (
 	addLocks          bool
 	debug             bool
 	quiet             bool
+	hexEncode         bool
 )
 
 func Execute() error {
@@ -280,6 +289,13 @@ func init() {
 		"add-locks",
 		false,
 		"add lock statements to dump",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&hexEncode,
+		"hex-encode",
+		false,
+		"performs hex encoding and respective decode statement for binary values",
 	)
 
 	rootCmd.PersistentFlags().StringVar(
