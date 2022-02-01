@@ -27,6 +27,8 @@ func parseMysqlOptions(m *mySQL, options []Option) error {
 			m.lockTables = false
 		case "hex-encode":
 			m.shouldHexBins = true
+		case "ignore-generated":
+			m.ignoreGenerated = true
 		case "insert-into-limit":
 			i, err := strconv.Atoi(v.value)
 			if err != nil {

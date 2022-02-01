@@ -72,7 +72,7 @@ please refer to faker documentation [here](https://pkg.go.dev/github.com/jaswdr/
 | --quick              | dump writes row by row as opposed to using extended inserts                                 | bool   |
 | --add-locks          | add write lock statements to the dump                                                       | bool   |
 | --hex-encode         | performs hex encoding and respective decode statement for binary values                     | bool   |
-
+| --ignore-generated   | strips generated columns from create statements                                             | bool   |
 ## Configuration Example
 ```yaml
 rewrite:
