@@ -28,7 +28,11 @@ var rootCmd = &cobra.Command{
 
 		defer func(logger *zap.Logger) {
 			err := logger.Sync()
-			if err != nil && !strings.Contains(err.Error(), "invalid argument") {
+			if err != nil &&
+				(!strings.Contains(err.Error(), "invalid argument") && !strings.Contains(
+					err.Error(),
+					"inappropriate ioctl for device",
+				)) {
 				logger.Fatal(
 					err.Error(),
 					zap.String("step", "logger finalization"),
