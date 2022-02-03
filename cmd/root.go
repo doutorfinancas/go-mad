@@ -96,6 +96,10 @@ var rootCmd = &cobra.Command{
 			opt = append(opt, database.OptionValue("hex-encode", ""))
 		}
 
+		if ignoreGenerated {
+			opt = append(opt, database.OptionValue("ignore-generated", ""))
+		}
+
 		if charset != "" {
 			opt = append(opt, database.OptionValue("set-charset", charset))
 		}
@@ -184,6 +188,7 @@ var (
 	debug             bool
 	quiet             bool
 	hexEncode         bool
+	ignoreGenerated   bool
 )
 
 func Execute() error {
@@ -296,6 +301,13 @@ func init() {
 		"hex-encode",
 		false,
 		"performs hex encoding and respective decode statement for binary values",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&ignoreGenerated,
+		"ignore-generated",
+		false,
+		"strips generated columns from create statements",
 	)
 
 	rootCmd.PersistentFlags().StringVar(

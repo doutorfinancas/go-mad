@@ -38,7 +38,9 @@ type mySQL struct {
 	openTx              *sql.Tx
 	extendedInsertLimit int
 	mapBins             map[string][]string
+	mapExclusionColumns map[string][]string
 	shouldHexBins       bool
+	ignoreGenerated     bool
 }
 
 const (
@@ -62,7 +64,9 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 		extendedInsertLimit: ExtendedInsertRows,
 		randomizerService:   randomizerService,
 		mapBins:             make(map[string][]string),
+		mapExclusionColumns: make(map[string][]string),
 		shouldHexBins:       false,
+		ignoreGenerated:     false,
 	}
 
 	err := parseMysqlOptions(m, options)
@@ -123,6 +127,8 @@ func (d *mySQL) Dump(w io.Writer) error {
 			return err
 		}
 
+		tmp = d.excludeGeneratedColumns(table, tmp)
+
 		// this will store if a value we might get is supposed to be hexed cause its binary
 		if d.shouldHexBins {
 			d.parseBinaryRelations(table, tmp)
@@ -162,7 +168,7 @@ func (d *mySQL) parseBinaryRelations(table, createTable string) {
 	scanner := bufio.NewScanner(strings.NewReader(createTable))
 	for scanner.Scan() {
 		if strings.Contains(strings.ToLower(scanner.Text()), "binary") {
-			r := regexp.MustCompile(".*`(.*)`.*")
+			r := regexp.MustCompile("`([^(]*)`")
 			columnName := r.FindAllStringSubmatch(scanner.Text(), -1)
 
 			if len(columnName) > 0 && len(columnName[0]) > 0 {
@@ -172,8 +178,49 @@ func (d *mySQL) parseBinaryRelations(table, createTable string) {
 	}
 }
 
+func (d *mySQL) excludeGeneratedColumns(table, createTable string) string {
+	d.mapExclusionColumns[table] = make([]string, 0)
+	tmp := ""
+
+	scanner := bufio.NewScanner(strings.NewReader(createTable))
+	for scanner.Scan() {
+		if !strings.Contains(strings.ToLower(scanner.Text()), "generated always") {
+			tmp += scanner.Text() + "\n"
+		} else {
+			r := regexp.MustCompile("`([^(]*)`")
+			columnName := r.FindAllStringSubmatch(scanner.Text(), -1)
+
+			if len(columnName) > 0 && len(columnName[0]) > 0 {
+				d.mapExclusionColumns[table] = append(d.mapExclusionColumns[table], columnName[0][1])
+			}
+		}
+	}
+
+	if !d.ignoreGenerated {
+		return createTable
+	}
+
+	if createTable[len(createTable)-1:] != "\n" {
+		return tmp[:len(tmp)-1]
+	}
+
+	return tmp
+}
+
 func (d *mySQL) isColumnBinary(table, columnName string) bool {
 	if val, ok := d.mapBins[table]; ok {
+		for _, b := range val {
+			if b == columnName {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (d *mySQL) isColumnExcluded(table, columnName string) bool {
+	if val, ok := d.mapExclusionColumns[table]; ok {
 		for _, b := range val {
 			if b == columnName {
 				return true
@@ -307,7 +354,7 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 		scanArgs[i] = &values[i]
 	}
 
-	query := fmt.Sprintf("INSERT INTO `%s` VALUES", table)
+	query := d.generateInsertStatement(columns, table)
 	var data []string
 	for rows.Next() {
 		if dErr := rows.Scan(scanArgs...); err != nil {
@@ -348,6 +395,15 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 	return nil
 }
 
+func (d *mySQL) generateInsertStatement(cols []string, table string) string {
+	s := fmt.Sprintf("INSERT INTO `%s` (", table)
+	for _, col := range cols {
+		s += fmt.Sprintf("%s, ", col)
+	}
+
+	return s[:len(s)-2] + ") VALUES"
+}
+
 func (d *mySQL) getTableHeader(table string) (str string, count uint64, err error) {
 	str = fmt.Sprintf("\n--\n-- Data for table `%s`", table)
 	count, err = d.rowCount(table)
@@ -374,22 +430,20 @@ func (d *mySQL) evaluateErrors(base error, rows *sql.Rows) error {
 
 func (d *mySQL) selectAllDataFor(table string) (rows *sql.Rows, columns []string, err error) {
 	var selectQuery string
-	if selectQuery, err = d.getSelectQueryFor(table); err != nil {
+	if columns, selectQuery, err = d.getSelectQueryFor(table); err != nil {
 		return
 	}
 	if rows, err = d.db.Query(selectQuery); err != nil {
 		return
 	}
-	if columns, err = rows.Columns(); err != nil {
-		return
-	}
+
 	return
 }
 
-func (d *mySQL) getSelectQueryFor(table string) (query string, err error) {
-	cols, err := d.getColumnsForSelect(table)
+func (d *mySQL) getSelectQueryFor(table string) (cols []string, query string, err error) {
+	cols, err = d.getColumnsForSelect(table)
 	if err != nil {
-		return "", err
+		return cols, "", err
 	}
 	query = fmt.Sprintf("SELECT %s FROM `%s`", strings.Join(cols, ", "), table)
 	if where, ok := d.whereMap[strings.ToLower(table)]; ok {
@@ -415,24 +469,28 @@ func (d *mySQL) getColumnsForSelect(table string) (columns []string, err error) 
 	defer func(rows *sql.Rows) {
 		dErr := rows.Close()
 		if dErr != nil {
-			d.log.Warn(
-				dErr.Error(),
-				zap.String("table", table),
-			)
+			d.log.Warn(dErr.Error(), zap.String("table", table))
 		}
 	}(rows)
-	if columns, err = rows.Columns(); err != nil {
+	var tmp []string
+	if tmp, err = rows.Columns(); err != nil {
 		return
 	}
-	for k, column := range columns {
+
+	for _, column := range tmp {
+		if d.isColumnExcluded(table, column) {
+			continue
+		}
+
 		replacement, ok := d.selectMap[strings.ToLower(table)][strings.ToLower(column)]
 		if ok {
-			columns[k] = fmt.Sprintf("%s AS `%s`", replacement, column)
+			columns = append(columns, fmt.Sprintf("%s AS `%s`", replacement, column))
 		} else {
-			columns[k] = fmt.Sprintf("`%s`", column)
+			columns = append(columns, fmt.Sprintf("`%s`", column))
 		}
 	}
-	return
+
+	return columns, nil
 }
 
 func (d *mySQL) rowCount(table string) (count uint64, err error) {
