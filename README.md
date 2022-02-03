@@ -28,7 +28,7 @@ Currently, a version is still not available due to the fact this repo is a work 
 but will soon be available (a few days)
 
 ```shell
-go install github.com/doutorfinancas/go-mad@0.1.0
+go install github.com/doutorfinancas/go-mad@0.2.0
 ```
 
 ## Usage
@@ -97,6 +97,16 @@ where:
   users: |-
     id < 5000
 ```
+
+## Contributing
+Feel free to contribute to the project, as in form of opening issues as by submitting a pull request
+To do so:
+- Clone the project
+- Make sure you have [golint-ci](https://github.com/golangci/golangci-lint) installed
+- If you have [pre-commit](https://pre-commit.com/), you can `make hook-setup`
+- Write your code, run `make test` and commit (it should be signed)
+- Open pull request and wait for our review :)
+
 
 ## Next Steps (ToDos)
 - [ ] Adds support to exporting multiple databases at a time
