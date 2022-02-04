@@ -208,6 +208,7 @@ func (d *mySQL) excludeGeneratedColumns(table, createTable string) string {
 }
 
 func (d *mySQL) isColumnBinary(table, columnName string) bool {
+	columnName = strings.Trim(columnName, "`")
 	if val, ok := d.mapBins[table]; ok {
 		for _, b := range val {
 			if b == columnName {
