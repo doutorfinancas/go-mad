@@ -328,7 +328,13 @@ func (d *mySQL) getTables() ([]string, error) {
 }
 
 func (d *mySQL) dumpTableData(w io.Writer, table string) error {
-	rows, columns, err := d.selectAllDataFor(table)
+	columns, err := d.getColumnsForSelect(table, false)
+
+	if err != nil {
+		return err
+	}
+
+	rows, _, err := d.selectAllDataFor(table)
 	if a := d.evaluateErrors(err, rows); a != nil {
 		return a
 	}
@@ -442,7 +448,7 @@ func (d *mySQL) selectAllDataFor(table string) (rows *sql.Rows, columns []string
 }
 
 func (d *mySQL) getSelectQueryFor(table string) (cols []string, query string, err error) {
-	cols, err = d.getColumnsForSelect(table)
+	cols, err = d.getColumnsForSelect(table, true)
 	if err != nil {
 		return cols, "", err
 	}
@@ -461,7 +467,7 @@ func (d *mySQL) getUnlockTablesStatement() string {
 	return "UNLOCK TABLES;\n"
 }
 
-func (d *mySQL) getColumnsForSelect(table string) (columns []string, err error) {
+func (d *mySQL) getColumnsForSelect(table string, considerRewriteMap bool) (columns []string, err error) {
 	rows, err := d.db.Query(fmt.Sprintf("SELECT * FROM `%s` LIMIT 1", table))
 	if a := d.evaluateErrors(err, rows); a != nil {
 		return columns, a
@@ -484,7 +490,11 @@ func (d *mySQL) getColumnsForSelect(table string) (columns []string, err error) 
 		}
 
 		replacement, ok := d.selectMap[strings.ToLower(table)][strings.ToLower(column)]
-		if ok {
+		if ok && considerRewriteMap {
+			if len(replacement) >= 5 && replacement[0:5] == "faker" {
+				replacement = fmt.Sprintf("'%s'", replacement)
+			}
+
 			columns = append(columns, fmt.Sprintf("%s AS `%s`", replacement, column))
 		} else {
 			columns = append(columns, fmt.Sprintf("`%s`", column))
