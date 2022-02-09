@@ -118,7 +118,7 @@ func TestMySQLGetColumnsForSelect(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"col1", "col2", "col3"}).AddRow("a", "b", "c"),
 	)
-	columns, err := dumper.getColumnsForSelect("table")
+	columns, err := dumper.getColumnsForSelect("table", true)
 	assert.Nil(t, err)
 	assert.Equal(t, []string{"`col1`", "NOW() AS `col2`", "`col3`"}, columns)
 
@@ -127,7 +127,7 @@ func TestMySQLGetColumnsForSelect(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"col1", "col2", "col3"}).AddRow("a", "b", "c"),
 	)
-	columns, err = dumper.getColumnsForSelect("table")
+	columns, err = dumper.getColumnsForSelect("table", true)
 	assert.Nil(t, err)
 	assert.Equal(t, []string{"NOW() AS `col2`", "`col3`"}, columns)
 }
@@ -138,7 +138,7 @@ func TestMySQLGetColumnsForSelectHandlingErrorWhenQuerying(t *testing.T) {
 	dumper.selectMap = map[string]map[string]string{"table": {"col2": "NOW()"}}
 	err := errors.New("broken")
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(err)
-	columns, dErr := dumper.getColumnsForSelect("table")
+	columns, dErr := dumper.getColumnsForSelect("table", true)
 	assert.Equal(t, dErr, err)
 	assert.Empty(t, columns)
 }
@@ -249,6 +249,11 @@ func TestMySQLDumpTableData(t *testing.T) {
 		{5, "Carrot"},
 		{6, "Leek"},
 	}
+
+	mock.ExpectQuery("SELECT \\* FROM `vegetable_list` LIMIT 1").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "vegetable"}).
+			AddRow(1, "Lettuce"),
+	)
 
 	mock.ExpectQuery("SELECT \\* FROM `vegetable_list` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"id", "vegetable"}).
