@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"database/sql"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -14,12 +15,27 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	Version = "0.2.1"
+)
+
 var rootCmd = &cobra.Command{
-	Use:   "dump",
+	Use:   "go-mad",
 	Short: "MySQL Anonymized Dump",
 	Long: `A full fledged anonymized dump facility that allows some compatibility
 				with mysql original flags for mysqldump`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if getVersion {
+			fmt.Printf(
+				`go-mad: Mysql Anonymized Dump version %s
+	Made with love by Doutor Finanças
+	We trully hope this helps:)
+`,
+				Version,
+			)
+			os.Exit(0)
+		}
+
 		logger, _ := zap.NewProduction()
 
 		if debug {
@@ -189,6 +205,7 @@ var (
 	quiet             bool
 	hexEncode         bool
 	ignoreGenerated   bool
+	getVersion        bool
 )
 
 func Execute() error {
@@ -287,6 +304,13 @@ func init() {
 		"quick",
 		false,
 		"dump rows one line at a time, useful for large tables",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&getVersion,
+		"version",
+		false,
+		"returns version for go-mad",
 	)
 
 	rootCmd.PersistentFlags().BoolVar(

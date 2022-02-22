@@ -47,6 +47,7 @@ const (
 	ExtendedInsertRows = 100
 	IgnoreMapPlacement = "ignore"
 	NoDataMapPlacement = "nodata"
+	FakerUsageCheck    = "faker"
 )
 
 func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.Service, options ...Option) (
@@ -369,23 +370,7 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 		}
 		var vals []string
 		for i, col := range values {
-			val := "NULL"
-
-			if col != nil {
-				if d.shouldHexBins && d.isColumnBinary(table, columns[i]) {
-					val = fmt.Sprintf("UNHEX('%s')", hex.EncodeToString(*col))
-				} else {
-					val = escape(string(*col))
-
-					if len(val) >= 5 && val[0:5] == "faker" {
-						val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
-					}
-
-					val = fmt.Sprintf("'%s'", val)
-				}
-			}
-
-			vals = append(vals, val)
+			vals = append(vals, d.getProperEscapedValue(col, table, columns[i]))
 		}
 
 		data = append(data, fmt.Sprintf("( %s )", strings.Join(vals, ", ")))
@@ -400,6 +385,26 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 	}
 
 	return nil
+}
+
+func (d *mySQL) getProperEscapedValue(col *sql.RawBytes, table, columnName string) string {
+	val := "NULL"
+
+	if col != nil {
+		if d.shouldHexBins && d.isColumnBinary(table, columnName) {
+			val = fmt.Sprintf("UNHEX('%s')", hex.EncodeToString(*col))
+		} else {
+			val = escape(string(*col))
+
+			if len(val) >= 5 && val[0:5] == FakerUsageCheck {
+				val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
+			}
+
+			val = fmt.Sprintf("'%s'", val)
+		}
+	}
+
+	return val
 }
 
 func (d *mySQL) generateInsertStatement(cols []string, table string) string {
@@ -491,7 +496,7 @@ func (d *mySQL) getColumnsForSelect(table string, considerRewriteMap bool) (colu
 
 		replacement, ok := d.selectMap[strings.ToLower(table)][strings.ToLower(column)]
 		if ok && considerRewriteMap {
-			if len(replacement) >= 5 && replacement[0:5] == "faker" {
+			if len(replacement) >= 5 && replacement[0:5] == FakerUsageCheck {
 				replacement = fmt.Sprintf("'%s'", replacement)
 			}
 

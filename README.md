@@ -28,19 +28,19 @@ Currently, a version is still not available due to the fact this repo is a work 
 but will soon be available (a few days)
 
 ```shell
-go install github.com/doutorfinancas/go-mad@0.2.1
+go install github.com/doutorfinancas/go-mad@0.2.3
 ```
 
 ## Usage
 
 from shell, call:
 ```shell
-go-mad dump my_database --config=config_example.yml
+go-mad my_database --config=config_example.yml
 ```
 
 if you are using innodb, then the configurations recommended are:
 ```shell
-go-mad dump my_database --config=config_example.yml --single-transaction --quick
+go-mad my_database --config=config_example.yml --single-transaction --quick
 ```
 
 It will create a larger dump, but wraps everything around a transaction, disables locks and dumps writes faster
@@ -73,13 +73,14 @@ please refer to faker documentation [here](https://pkg.go.dev/github.com/jaswdr/
 | --add-locks          | add write lock statements to the dump                                                       | bool   |
 | --hex-encode         | performs hex encoding and respective decode statement for binary values                     | bool   |
 | --ignore-generated   | strips generated columns from create statements                                             | bool   |
+
 ## Configuration Example
 ```yaml
 rewrite:
   users:
-    email: faker.Internet().Email()
+    email: "'faker.Internet().Email()'"
     password: '"FAKE_PASSWORD"'
-    username: faker.Internet().Email()
+    username: "'faker.Internet().Email()'"
     # name: faker.Person().Name()
     name: "SELECT names FROM random WHERE id = users.id"
 

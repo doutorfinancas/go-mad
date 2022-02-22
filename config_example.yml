@@ -1,9 +1,9 @@
 rewrite:
   users:
-    email: faker.Internet().Email()
-    password: faker.Lorem().Bytes(40)
-    username: faker.Internet().Email()
-    name: faker.Person().Name()
+    email: "'faker.Internet().Email()'"
+    password: "'faker.Lorem().Bytes(40)'"
+    username: "'faker.Internet().Email()'"
+    name: "'faker.Person().Name()'"
 
 nodata:
   - actions
