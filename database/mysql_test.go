@@ -494,3 +494,33 @@ func Test_mySQL_isColumnExcluded(t *testing.T) {
 		)
 	}
 }
+
+func Test_mySQL_ignoresTable(t *testing.T) {
+	db, mock := getDB(t)
+
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("OLD_table", "BASE TABLE"),
+	)
+
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("OLD_table", "BASE TABLE"),
+	)
+
+	dumper := getInternalMySQLInstance(db, nil)
+
+	dumper.SetFilterMap([]string{}, []string{"OLD_table"})
+
+	b := new(strings.Builder)
+
+	err := dumper.Dump(b)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	if b.String() != "SET FOREIGN_KEY_CHECKS = 1;\n" {
+		t.Error("No tables should be dumped")
+	}
+}
