@@ -94,11 +94,11 @@ func (d *mySQL) SetFilterMap(noData, ignore []string) error {
 		return err
 	}
 	for _, table := range d.listTables(t, noData) {
-		d.filterMap[table] = NoDataMapPlacement
+		d.filterMap[strings.ToLower(table)] = NoDataMapPlacement
 	}
 
 	for _, table := range d.listTables(t, ignore) {
-		d.filterMap[table] = IgnoreMapPlacement
+		d.filterMap[strings.ToLower(table)] = IgnoreMapPlacement
 	}
 
 	return nil
