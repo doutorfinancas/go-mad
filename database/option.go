@@ -29,6 +29,10 @@ func parseMysqlOptions(m *mySQL, options []Option) error {
 			m.shouldHexBins = true
 		case "ignore-generated":
 			m.ignoreGenerated = true
+		case "dump-trigger":
+			m.dumpTrigger = true
+		case "skip-definer":
+			m.skipDefiner = true
 		case "insert-into-limit":
 			i, err := strconv.Atoi(v.value)
 			if err != nil {

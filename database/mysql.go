@@ -41,6 +41,8 @@ type mySQL struct {
 	mapExclusionColumns map[string][]string
 	shouldHexBins       bool
 	ignoreGenerated     bool
+	dumpTrigger         bool
+	skipDefiner         bool
 }
 
 const (
@@ -49,6 +51,8 @@ const (
 	NoDataMapPlacement = "nodata"
 	FakerUsageCheck    = "faker"
 )
+
+var skipDefinerRegExp = regexp.MustCompile(`(?m)DEFINER=[^ ]* `)
 
 func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.Service, options ...Option) (
 	MySQL,
@@ -68,6 +72,8 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 		mapExclusionColumns: make(map[string][]string),
 		shouldHexBins:       false,
 		ignoreGenerated:     false,
+		dumpTrigger:         false,
+		skipDefiner:         false,
 	}
 
 	err := parseMysqlOptions(m, options)
@@ -159,6 +165,13 @@ func (d *mySQL) Dump(w io.Writer) error {
 	}
 
 	_, err = fmt.Fprintf(w, "SET FOREIGN_KEY_CHECKS = 1;\n")
+
+	if d.dumpTrigger {
+		if err := d.dumpTriggers(w); err != nil {
+			return err
+		}
+	}
+
 	return err
 }
 
@@ -568,4 +581,73 @@ func (d *mySQL) getTransaction() *sql.Tx {
 	}
 
 	return d.openTx
+}
+
+func (d *mySQL) dumpTriggers(w io.Writer) error {
+	triggers, err := d.getTriggers()
+	if err != nil {
+		return err
+	}
+
+	for _, trigger := range triggers {
+		ddl, err := d.getTrigger(trigger)
+
+		if err != nil {
+			return err
+		}
+
+		fmt.Fprintf(w, "\n--\n-- Trigger `%s`\n--\n\n", trigger)
+
+		if _, err := w.Write([]byte(ddl)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (d *mySQL) getTriggers() ([]string, error) {
+	triggers := make([]string, 0)
+
+	rows, err := d.db.Query("SHOW TRIGGERS")
+	if a := d.evaluateErrors(err, rows); a != nil {
+		return triggers, a
+	}
+
+	defer func(rows *sql.Rows) {
+		dErr := rows.Close()
+		if dErr != nil {
+			d.log.Error(
+				dErr.Error(),
+				zap.String("internal", "failed to close rows while getting triggers"),
+			)
+		}
+	}(rows)
+
+	for rows.Next() {
+		var triggerName, unknown string
+
+		if dErr := rows.Scan(&triggerName, &unknown, &unknown, &unknown, &unknown, &unknown, &unknown, &unknown, &unknown, &unknown, &unknown); dErr != nil {
+			return triggers, dErr
+		}
+
+		triggers = append(triggers, triggerName)
+	}
+
+	return triggers, nil
+}
+
+func (d *mySQL) getTrigger(triggerName string) (string, error) {
+	var ddl, unknown string
+
+	row := d.useTransactionOrDBQueryRow(fmt.Sprintf("SHOW CREATE TRIGGER `%s`", triggerName))
+	if err := row.Scan(&unknown, &unknown, &ddl, &unknown, &unknown, &unknown, &unknown); err != nil {
+		return "", err
+	}
+
+	if d.skipDefiner {
+		ddl = skipDefinerRegExp.ReplaceAllString(ddl, "")
+	}
+
+	return ddl + "\n", nil
 }
