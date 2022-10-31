@@ -133,6 +133,14 @@ var rootCmd = &cobra.Command{
 			opt = append(opt, database.OptionValue("skip-lock-tables", ""))
 		}
 
+		if dumpTrigger {
+			opt = append(opt, database.OptionValue("dump-trigger", ""))
+		}
+
+		if skipDefiner {
+			opt = append(opt, database.OptionValue("skip-definer", ""))
+		}
+
 		dumper, err := database.NewMySQLDumper(db, logger, service, opt...)
 		if err != nil {
 			logger.Fatal(
@@ -206,6 +214,9 @@ var (
 	hexEncode         bool
 	ignoreGenerated   bool
 	getVersion        bool
+	insertIntoLimit   string
+	dumpTrigger       bool
+	skipDefiner       bool
 )
 
 func Execute() error {
@@ -234,7 +245,7 @@ func init() {
 		&user,
 		"user",
 		"u",
-		"",
+		"root",
 		"username to connect to the database",
 	)
 
@@ -335,9 +346,23 @@ func init() {
 	)
 
 	rootCmd.PersistentFlags().StringVar(
-		&port,
+		&insertIntoLimit,
 		"insert-into-limit",
 		"100",
 		"limit for the number of rows to go into each insert, cannot be used in conjunction with quick",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&dumpTrigger,
+		"dump-trigger",
+		false,
+		"dump triggers",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&skipDefiner,
+		"skip-definer",
+		false,
+		"skip definer in dumped triggers",
 	)
 }
