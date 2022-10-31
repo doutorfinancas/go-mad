@@ -649,5 +649,5 @@ func (d *mySQL) getTrigger(triggerName string) (string, error) {
 		ddl = skipDefinerRegExp.ReplaceAllString(ddl, "")
 	}
 
-	return ddl + "\n", nil
+	return ddl + ";\n", nil
 }
