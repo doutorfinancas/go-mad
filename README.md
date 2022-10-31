@@ -28,7 +28,7 @@ Currently, a version is still not available due to the fact this repo is a work 
 but will soon be available (a few days)
 
 ```shell
-go install github.com/doutorfinancas/go-mad@0.2.3
+go install github.com/doutorfinancas/go-mad@0.3.0
 ```
 
 ## Usage
@@ -66,13 +66,15 @@ please refer to faker documentation [here](https://pkg.go.dev/github.com/jaswdr/
 | --char-set           | uses SET NAMES command with provided charset, default utf8                                  | string |
 | --insert-into-limit  | defines limit to be used with each insert statement, cannot use with --quick, default `100` | int    |
 | --debug (-v)         | turns on verbose mode if passed                                                             | bool   |
-| --quiet (-q          | disables log output if passed                                                               | bool   |
+| --quiet (-q)         | disables log output if passed                                                               | bool   |
 | --skip-lock-tables   | skips locking mysql tables when dumping                                                     | bool   |
 | --single-transaction | does the dump within a single transaction by issuing a BEGIN Command                        | bool   |
 | --quick              | dump writes row by row as opposed to using extended inserts                                 | bool   |
 | --add-locks          | add write lock statements to the dump                                                       | bool   |
 | --hex-encode         | performs hex encoding and respective decode statement for binary values                     | bool   |
 | --ignore-generated   | strips generated columns from create statements                                             | bool   |
+| --dump-trigger       | dumps triggers from database                                                                | bool   |
+| --skip-definer       | skips definer of triggers dumps (used in conjuntion with `--dump-trigger`)                  | bool   |
 
 ## Configuration Example
 ```yaml
@@ -110,6 +112,7 @@ To do so:
 
 
 ## Next Steps (ToDos)
+- [X] Adds support for triggers (thank you @shyim)
 - [ ] Adds support to exporting multiple databases at a time
 - [ ] Exports run in goroutines to accelerate when `--parallel` is passed
 - [ ] Add support for env vars
