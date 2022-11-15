@@ -28,7 +28,7 @@ Currently, a version is still not available due to the fact this repo is a work 
 but will soon be available (a few days)
 
 ```shell
-go install github.com/doutorfinancas/go-mad@0.3.0
+go install github.com/doutorfinancas/go-mad@0.3.1
 ```
 
 ## Usage
