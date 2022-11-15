@@ -556,7 +556,7 @@ func Test_mySQL_dumpsTriggers(t *testing.T) {
 		t.Error(err)
 	}
 
-	if !strings.Contains(b.String(), "CREATE DEFINER=`root`@`%` TRIGGER `ins_sum` BEFORE INSERT ON `account` FOR EACH ROW SET @sum = @sum + NEW.amount") {
+	if !strings.Contains(b.String(), "CREATE DEFINER=`root`@`%` TRIGGER `ins_sum` BEFORE INSERT ON `account` FOR EACH ROW SET @sum = @sum + NEW.amount;") {
 		t.Error("Trigger not dumped")
 	}
 }
@@ -593,7 +593,7 @@ func Test_mySQL_dumpsTriggersIgnoresDefiners(t *testing.T) {
 		t.Error(err)
 	}
 
-	if !strings.Contains(b.String(), "CREATE TRIGGER `ins_sum` BEFORE INSERT ON `account` FOR EACH ROW SET @sum = @sum + NEW.amount") {
+	if !strings.Contains(b.String(), "CREATE TRIGGER `ins_sum` BEFORE INSERT ON `account` FOR EACH ROW SET @sum = @sum + NEW.amount;") {
 		t.Error("Trigger not dumped")
 	}
 }
