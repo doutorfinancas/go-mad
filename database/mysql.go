@@ -597,10 +597,13 @@ func (d *mySQL) dumpTriggers(w io.Writer) error {
 		}
 
 		fmt.Fprintf(w, "\n--\n-- Trigger `%s`\n--\n\n", trigger)
+		fmt.Fprintln(w, "DELIMITER //")
 
 		if _, err := w.Write([]byte(ddl)); err != nil {
 			return err
 		}
+		fmt.Fprintln(w, "//")
+		fmt.Fprintln(w, "DELIMITER ;")
 	}
 
 	return nil
