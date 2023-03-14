@@ -43,6 +43,7 @@ type mySQL struct {
 	ignoreGenerated     bool
 	dumpTrigger         bool
 	skipDefiner         bool
+	triggerDelimiter    string
 }
 
 const (
@@ -74,6 +75,7 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 		ignoreGenerated:     false,
 		dumpTrigger:         false,
 		skipDefiner:         false,
+		triggerDelimiter:    "",
 	}
 
 	err := parseMysqlOptions(m, options)
@@ -598,8 +600,16 @@ func (d *mySQL) dumpTriggers(w io.Writer) error {
 
 		fmt.Fprintf(w, "\n--\n-- Trigger `%s`\n--\n\n", trigger)
 
+		if d.triggerDelimiter != "" {
+			fmt.Fprintf(w, "DELIMITER %s\n", d.triggerDelimiter)
+		}
+
 		if _, err := w.Write([]byte(ddl)); err != nil {
 			return err
+		}
+
+		if d.triggerDelimiter != "" {
+			fmt.Fprintf(w, "%s\nDELIMITER ;\n", d.triggerDelimiter)
 		}
 	}
 

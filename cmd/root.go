@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	Version = "0.2.1"
+	Version = "0.3.2"
 )
 
 var rootCmd = &cobra.Command{
@@ -120,6 +120,10 @@ var rootCmd = &cobra.Command{
 			opt = append(opt, database.OptionValue("set-charset", charset))
 		}
 
+		if triggerDelimiter != "" {
+			opt = append(opt, database.OptionValue("trigger-delimiter", triggerDelimiter))
+		}
+
 		if singleTransaction {
 			opt = append(opt, database.OptionValue("single-transaction", ""))
 			// if we do single-transaction we need to automatically turn skip-lock-tables on
@@ -217,6 +221,7 @@ var (
 	insertIntoLimit   string
 	dumpTrigger       bool
 	skipDefiner       bool
+	triggerDelimiter  string
 )
 
 func Execute() error {
@@ -364,5 +369,12 @@ func init() {
 		"skip-definer",
 		false,
 		"skip definer in dumped triggers",
+	)
+
+	rootCmd.PersistentFlags().StringVar(
+		&triggerDelimiter,
+		"trigger-delimiter",
+		"",
+		"define the char to delimit triggers",
 	)
 }

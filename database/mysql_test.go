@@ -547,6 +547,7 @@ func Test_mySQL_dumpsTriggers(t *testing.T) {
 	dumper := getInternalMySQLInstance(db, nil)
 
 	dumper.dumpTrigger = true
+	dumper.triggerDelimiter = "|"
 
 	b := new(strings.Builder)
 
@@ -558,6 +559,14 @@ func Test_mySQL_dumpsTriggers(t *testing.T) {
 
 	if !strings.Contains(b.String(), "CREATE DEFINER=`root`@`%` TRIGGER `ins_sum` BEFORE INSERT ON `account` FOR EACH ROW SET @sum = @sum + NEW.amount;") {
 		t.Error("Trigger not dumped")
+	}
+
+	if !strings.Contains(b.String(), "DELIMITER |") {
+		t.Error("Trigger escaping is missing")
+	}
+
+	if !strings.Contains(b.String(), "DELIMITER ;") {
+		t.Error("Trigger escaping reset is missing")
 	}
 }
 
