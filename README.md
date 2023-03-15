@@ -24,11 +24,10 @@ Notorious Projects that could do similar:
 
 ## Installation
 
-Currently, a version is still not available due to the fact this repo is a work in progress
-but will soon be available (a few days)
+You can install it using `go install` or by using one of the pre compiled binaries available in the (releases)[https://github.com/doutorfinancas/go-mad/releases]
 
 ```shell
-go install github.com/doutorfinancas/go-mad@0.3.1
+go install github.com/doutorfinancas/go-mad@0.3.2
 ```
 
 ## Usage
@@ -64,6 +63,7 @@ please refer to faker documentation [here](https://pkg.go.dev/github.com/jaswdr/
 | --config (-c)        | path to your go-mad config file, example below                                              | string |
 | --output (-o)        | path to the intended output file, default STDOUT                                            | string |
 | --char-set           | uses SET NAMES command with provided charset, default utf8                                  | string |
+| --trigger-definer    | changes trigger delimiter to the string you pass, default is `';'`                          | string |
 | --insert-into-limit  | defines limit to be used with each insert statement, cannot use with --quick, default `100` | int    |
 | --debug (-v)         | turns on verbose mode if passed                                                             | bool   |
 | --quiet (-q)         | disables log output if passed                                                               | bool   |
@@ -81,7 +81,7 @@ please refer to faker documentation [here](https://pkg.go.dev/github.com/jaswdr/
 rewrite:
   users:
     email: "'faker.Internet().Email()'"
-    password: '"FAKE_PASSWORD"'
+    password: "'FAKE_PASSWORD'"
     username: "'faker.Internet().Email()'"
     # name: faker.Person().Name()
     name: "SELECT names FROM random WHERE id = users.id"
