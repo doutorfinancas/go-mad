@@ -409,13 +409,13 @@ func (d *mySQL) getProperEscapedValue(col *sql.RawBytes, table, columnName strin
 		if d.shouldHexBins && d.isColumnBinary(table, columnName) {
 			val = fmt.Sprintf("UNHEX('%s')", hex.EncodeToString(*col))
 		} else {
-			val = escape(string(*col))
+			val = string(*col)
 
 			if len(val) >= 5 && val[0:5] == FakerUsageCheck {
 				val, _ = d.randomizerService.ReplaceStringWithFakerWhenRequested(val)
 			}
 
-			val = fmt.Sprintf("'%s'", val)
+			val = fmt.Sprintf("'%s'", escape(val))
 		}
 	}
 
