@@ -9,6 +9,7 @@ const (
 )
 
 func Test_service_ReplaceStringWithFakerWhenRequested(t *testing.T) {
+	t.Parallel()
 	type args struct {
 		request string
 	}
@@ -82,6 +83,8 @@ func Test_service_ReplaceStringWithFakerWhenRequested(t *testing.T) {
 }
 
 func Test_service_FakerError(t *testing.T) {
+	t.Parallel()
+
 	type args struct {
 		request string
 	}
@@ -151,6 +154,40 @@ func Test_service_FakerError(t *testing.T) {
 			"calling function with diff number of args that supposed",
 			args{
 				"faker.Person().Name(\"batatinhas\")",
+			},
+			func(s interface{}) bool {
+				return true
+			},
+			"this should have errored",
+			true,
+		},
+		{
+			"call a property",
+			args{
+				"faker.Bla",
+			},
+			func(s interface{}) bool {
+				return true
+			},
+			"this should have errored",
+			true,
+		},
+		{
+			"started a function call but missing parameters",
+			args{
+				"faker.Bla(",
+			},
+			func(s interface{}) bool {
+				return true
+			},
+			"this should have errored",
+			true,
+		},
+
+		{
+			"missing parameters on long call",
+			args{
+				"faker.Bla().Fuu",
 			},
 			func(s interface{}) bool {
 				return true
