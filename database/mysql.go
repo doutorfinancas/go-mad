@@ -42,6 +42,7 @@ type mySQL struct {
 	dumpTrigger         bool
 	skipDefiner         bool
 	triggerDelimiter    string
+	parallel            bool
 }
 
 const (

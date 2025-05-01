@@ -145,6 +145,10 @@ var rootCmd = &cobra.Command{
 			opt = append(opt, database.OptionValue("skip-definer", ""))
 		}
 
+		if parallel {
+			opt = append(opt, database.OptionValue("parallel", ""))
+		}
+
 		dumper, err := database.NewMySQLDumper(db, logger, service, opt...)
 		if err != nil {
 			logger.Fatal(
@@ -222,6 +226,7 @@ var (
 	dumpTrigger       bool
 	skipDefiner       bool
 	triggerDelimiter  string
+	parallel          bool
 )
 
 func Execute() error {
@@ -376,5 +381,12 @@ func init() {
 		"trigger-delimiter",
 		"",
 		"define the char to delimit triggers",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&parallel,
+		"parallel",
+		false,
+		"run exports in parallel",
 	)
 }
