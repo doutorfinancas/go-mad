@@ -118,16 +118,16 @@ func TestMySQLGetColumnsForSelect(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"col1", "col2", "col3"}).AddRow("a", "b", "c"),
 	)
-	columns, err := dumper.getColumnsForSelect("table", true)
+	columns, err := dumper.getColumnsForSelect("table", true, []string{})
 	assert.Nil(t, err)
 	assert.Equal(t, []string{"`col1`", "NOW() AS `col2`", "`col3`"}, columns)
 
-	dumper.mapExclusionColumns = map[string][]string{"table": {"col1"}}
+	generatedColumns := []string{"col1"}
 	dumper.ignoreGenerated = true
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"col1", "col2", "col3"}).AddRow("a", "b", "c"),
 	)
-	columns, err = dumper.getColumnsForSelect("table", true)
+	columns, err = dumper.getColumnsForSelect("table", true, generatedColumns)
 	assert.Nil(t, err)
 	assert.Equal(t, []string{"NOW() AS `col2`", "`col3`"}, columns)
 }
@@ -138,7 +138,7 @@ func TestMySQLGetColumnsForSelectHandlingErrorWhenQuerying(t *testing.T) {
 	dumper.selectMap = map[string]map[string]string{"table": {"col2": "NOW()"}}
 	err := errors.New("broken")
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(err)
-	columns, dErr := dumper.getColumnsForSelect("table", true)
+	columns, dErr := dumper.getColumnsForSelect("table", true, []string{})
 	assert.Equal(t, dErr, err)
 	assert.Empty(t, columns)
 }
@@ -151,7 +151,7 @@ func TestMySQLGetSelectQueryFor(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"c1", "c2"}).AddRow("a", "b"),
 	)
-	_, query, err := dumper.getSelectQueryFor("table")
+	_, query, err := dumper.getSelectQueryFor("table", []string{})
 	assert.Nil(t, err)
 	assert.Equal(t, "SELECT `c1`, NOW() AS `c2` FROM `table` WHERE c1 > 0", query)
 }
@@ -163,7 +163,7 @@ func TestMySQLGetSelectQueryForHandlingError(t *testing.T) {
 	dumper.whereMap = map[string]string{"table": "c1 > 0"}
 	dErr := errors.New("broken")
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(dErr)
-	_, query, err := dumper.getSelectQueryFor("table")
+	_, query, err := dumper.getSelectQueryFor("table", []string{})
 	assert.Equal(t, dErr, err)
 	assert.Equal(t, "", query)
 }
@@ -267,7 +267,7 @@ func TestMySQLDumpTableData(t *testing.T) {
 	mock.ExpectQuery("SELECT `id`, `vegetable` FROM `vegetable_list`").
 		WillReturnRows(rows)
 
-	assert.Nil(t, dumper.dumpTableData(buffer, "vegetable_list"))
+	assert.Nil(t, dumper.dumpTableData(buffer, "vegetable_list", []string{}, []string{}))
 
 	assert.Equal(t, strings.Count(buffer.String(), "INSERT INTO `vegetable_list` (`id`, `vegetable`) VALUES"), 6)
 
@@ -282,15 +282,14 @@ func TestMySQLDumpTableDataHandlingErrorFromSelectAllDataFor(t *testing.T) {
 	dumper := getInternalMySQLInstance(db, nil)
 	err := errors.New("fail")
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(err)
-	assert.Equal(t, err, dumper.dumpTableData(buffer, "table"))
+	assert.Equal(t, err, dumper.dumpTableData(buffer, "table", []string{}, []string{}))
 }
 
 func Test_mySQL_parseBinaryRelations(t *testing.T) {
 	db, _ := getDB(t)
 	type args struct {
-		table       string
-		createTable string
-		expectedMap map[string][]string
+		createTable   string
+		expectedSlice []string
 	}
 	tests := []struct {
 		name string
@@ -299,14 +298,13 @@ func Test_mySQL_parseBinaryRelations(t *testing.T) {
 		{
 			"manage create table successfully",
 			args{
-				"table",
 				`CREATE TABLE ` + "`table`" + ` (
   ` + "`id`" + ` binary(16) NOT NULL AUTO_INCREMENT,
   ` + "`s`" + ` char(60) DEFAULT NULL,
   PRIMARY KEY (` + "`id`" + `)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
-				map[string][]string{
-					"table": {"id"},
+				[]string{
+					"id",
 				},
 			},
 		},
@@ -315,8 +313,8 @@ func Test_mySQL_parseBinaryRelations(t *testing.T) {
 		t.Run(
 			tt.name, func(t *testing.T) {
 				d := getInternalMySQLInstance(db, nil)
-				d.parseBinaryRelations(tt.args.table, tt.args.createTable)
-				assert.Equal(t, d.mapBins, tt.args.expectedMap)
+				bins := d.parseBinaryRelations(tt.args.createTable)
+				assert.Equal(t, bins, tt.args.expectedSlice)
 			},
 		)
 	}
@@ -328,7 +326,7 @@ func Test_mySQL_removeGeneratedColumns(t *testing.T) {
 		table         string
 		createTable   string
 		strippedTable string
-		expectedMap   map[string][]string
+		expectedSlice []string
 	}
 	tests := []struct {
 		name string
@@ -350,8 +348,8 @@ func Test_mySQL_removeGeneratedColumns(t *testing.T) {
   ` + "`s`" + ` char(60) DEFAULT NULL,
   PRIMARY KEY (` + "`id`" + `)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
-				map[string][]string{
-					"table": {"reversed"},
+				[]string{
+					"reversed",
 				},
 			},
 		},
@@ -360,136 +358,10 @@ func Test_mySQL_removeGeneratedColumns(t *testing.T) {
 		t.Run(
 			tt.name, func(t *testing.T) {
 				d := getInternalMySQLInstance(db, nil)
-				d.excludeGeneratedColumns(tt.args.table, tt.args.createTable)
-				assert.Equal(t, d.mapExclusionColumns, tt.args.expectedMap)
-			},
-		)
-	}
-}
-
-func Test_mySQL_isColumnBinary(t *testing.T) {
-	db, _ := getDB(t)
-	type args struct {
-		table      string
-		columnName string
-		m          map[string][]string
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{
-			"should get true",
-			args{
-				"table",
-				"id",
-				map[string][]string{
-					"table": {"id"},
-				},
-			},
-			true,
-		},
-		{
-			"should get false",
-			args{
-				"table",
-				"potatoes",
-				map[string][]string{
-					"table": {"id"},
-				},
-			},
-			false,
-		},
-		{
-			"should get false",
-			args{
-				"cabbage",
-				"id",
-				map[string][]string{
-					"table": {"id"},
-				},
-			},
-			false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(
-			tt.name, func(t *testing.T) {
-				d := getInternalMySQLInstance(db, nil)
-				d.mapBins = tt.args.m
-				assert.Equalf(
-					t,
-					tt.want,
-					d.isColumnBinary(tt.args.table, tt.args.columnName),
-					"isColumnBinary(%v, %v)",
-					tt.args.table,
-					tt.args.columnName,
-				)
-			},
-		)
-	}
-}
-
-func Test_mySQL_isColumnExcluded(t *testing.T) {
-	db, _ := getDB(t)
-	type args struct {
-		table      string
-		columnName string
-		m          map[string][]string
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{
-			"should get true",
-			args{
-				"table",
-				"id",
-				map[string][]string{
-					"table": {"id"},
-				},
-			},
-			true,
-		},
-		{
-			"should get false",
-			args{
-				"table",
-				"potatoes",
-				map[string][]string{
-					"table": {"id"},
-				},
-			},
-			false,
-		},
-		{
-			"should get false",
-			args{
-				"cabbage",
-				"id",
-				map[string][]string{
-					"table": {"id"},
-				},
-			},
-			false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(
-			tt.name, func(t *testing.T) {
-				d := getInternalMySQLInstance(db, nil)
-				d.mapExclusionColumns = tt.args.m
-				assert.Equalf(
-					t,
-					tt.want,
-					d.isColumnExcluded(tt.args.table, tt.args.columnName),
-					"isColumnBinary(%v, %v)",
-					tt.args.table,
-					tt.args.columnName,
-				)
+				d.ignoreGenerated = true
+				stripped, cols := d.excludeGeneratedColumns(tt.args.createTable)
+				assert.Equal(t, cols, tt.args.expectedSlice)
+				assert.Equal(t, stripped, tt.args.strippedTable)
 			},
 		)
 	}

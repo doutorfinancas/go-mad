@@ -10,3 +10,12 @@ func AppendIfNotExists(slice []string, add string) []string {
 
 	return append(slice, add)
 }
+
+func InSlice(slice []string, needle string) bool {
+	for _, a := range slice {
+		if a == needle {
+			return true
+		}
+	}
+	return false
+}

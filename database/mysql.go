@@ -37,8 +37,6 @@ type mySQL struct {
 	randomizerService   generator.Service
 	openTx              *sql.Tx
 	extendedInsertLimit int
-	mapBins             map[string][]string
-	mapExclusionColumns map[string][]string
 	shouldHexBins       bool
 	ignoreGenerated     bool
 	dumpTrigger         bool
@@ -69,8 +67,6 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 		addLocks:            true,
 		extendedInsertLimit: ExtendedInsertRows,
 		randomizerService:   randomizerService,
-		mapBins:             make(map[string][]string),
-		mapExclusionColumns: make(map[string][]string),
 		shouldHexBins:       false,
 		ignoreGenerated:     false,
 		dumpTrigger:         false,
@@ -117,6 +113,8 @@ func (d *mySQL) SetFilterMap(noData, ignore []string) error {
 func (d *mySQL) Dump(w io.Writer) error {
 	var dump string
 	var tmp string
+	var binaryColumns []string
+	var generatedColumns []string
 	dump = fmt.Sprintf("SET NAMES %s;\n", d.charset)
 	dump += "SET FOREIGN_KEY_CHECKS = 0;\n"
 
@@ -136,16 +134,16 @@ func (d *mySQL) Dump(w io.Writer) error {
 			return err
 		}
 
-		tmp = d.excludeGeneratedColumns(table, tmp)
+		tmp, generatedColumns = d.excludeGeneratedColumns(tmp)
 
 		// this will store if a value we might get is supposed to be hexed cause its binary
 		if d.shouldHexBins {
-			d.parseBinaryRelations(table, tmp)
+			binaryColumns = d.parseBinaryRelations(tmp)
 		}
 
 		dump += tmp
 		if !skipData {
-			dump, err = d.dumpData(w, dump, table)
+			dump, err = d.dumpData(w, dump, table, generatedColumns, binaryColumns)
 			if err != nil {
 				return err
 			}
@@ -177,9 +175,8 @@ func (d *mySQL) Dump(w io.Writer) error {
 	return err
 }
 
-func (d *mySQL) parseBinaryRelations(table, createTable string) {
-	// no cache, if it is requested, replace existing entry
-	d.mapBins[table] = make([]string, 0)
+func (d *mySQL) parseBinaryRelations(createTable string) []string {
+	binaryColumns := make([]string, 0)
 
 	scanner := bufio.NewScanner(strings.NewReader(createTable))
 	for scanner.Scan() {
@@ -188,14 +185,16 @@ func (d *mySQL) parseBinaryRelations(table, createTable string) {
 			columnName := r.FindAllStringSubmatch(scanner.Text(), -1)
 
 			if len(columnName) > 0 && len(columnName[0]) > 0 {
-				d.mapBins[table] = append(d.mapBins[table], columnName[0][1])
+				binaryColumns = append(binaryColumns, columnName[0][1])
 			}
 		}
 	}
+
+	return binaryColumns
 }
 
-func (d *mySQL) excludeGeneratedColumns(table, createTable string) string {
-	d.mapExclusionColumns[table] = make([]string, 0)
+func (d *mySQL) excludeGeneratedColumns(createTable string) (string, []string) {
+	generatedColumns := make([]string, 0)
 	tmp := ""
 
 	scanner := bufio.NewScanner(strings.NewReader(createTable))
@@ -207,48 +206,23 @@ func (d *mySQL) excludeGeneratedColumns(table, createTable string) string {
 			columnName := r.FindAllStringSubmatch(scanner.Text(), -1)
 
 			if len(columnName) > 0 && len(columnName[0]) > 0 {
-				d.mapExclusionColumns[table] = append(d.mapExclusionColumns[table], columnName[0][1])
+				generatedColumns = append(generatedColumns, columnName[0][1])
 			}
 		}
 	}
 
 	if !d.ignoreGenerated {
-		return createTable
+		return createTable, generatedColumns
 	}
 
 	if createTable[len(createTable)-1:] != "\n" {
-		return tmp[:len(tmp)-1]
+		return tmp[:len(tmp)-1], generatedColumns
 	}
 
-	return tmp
+	return tmp, generatedColumns
 }
 
-func (d *mySQL) isColumnBinary(table, columnName string) bool {
-	columnName = strings.Trim(columnName, "`")
-	if val, ok := d.mapBins[table]; ok {
-		for _, b := range val {
-			if b == columnName {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func (d *mySQL) isColumnExcluded(table, columnName string) bool {
-	if val, ok := d.mapExclusionColumns[table]; ok {
-		for _, b := range val {
-			if b == columnName {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func (d *mySQL) dumpData(w io.Writer, dump, table string) (string, error) {
+func (d *mySQL) dumpData(w io.Writer, dump, table string, generatedColumns, binaryColumns []string) (string, error) {
 	var cnt uint64
 	var tmp string
 	var err error
@@ -276,7 +250,7 @@ func (d *mySQL) dumpData(w io.Writer, dump, table string) (string, error) {
 		// and after flush we need to clear the variable
 		dump = ""
 
-		if dErr := d.dumpTableData(w, table); dErr != nil {
+		if dErr := d.dumpTableData(w, table, generatedColumns, binaryColumns); dErr != nil {
 			return "", dErr
 		}
 
@@ -343,14 +317,14 @@ func (d *mySQL) getTables() ([]string, error) {
 	return tables, nil
 }
 
-func (d *mySQL) dumpTableData(w io.Writer, table string) error {
-	columns, err := d.getColumnsForSelect(table, false)
+func (d *mySQL) dumpTableData(w io.Writer, table string, generatedColumns, binaryColumns []string) error {
+	columns, err := d.getColumnsForSelect(table, false, generatedColumns)
 
 	if err != nil {
 		return err
 	}
 
-	rows, _, err := d.selectAllDataFor(table)
+	rows, _, err := d.selectAllDataFor(table, generatedColumns)
 	if a := d.evaluateErrors(err, rows); a != nil {
 		return a
 	}
@@ -385,7 +359,7 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 		}
 		var vals []string
 		for i, col := range values {
-			vals = append(vals, d.getProperEscapedValue(col, table, columns[i]))
+			vals = append(vals, d.getProperEscapedValue(col, columns[i], binaryColumns))
 		}
 
 		data = append(data, fmt.Sprintf("( %s )", strings.Join(vals, ", ")))
@@ -402,11 +376,11 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 	return nil
 }
 
-func (d *mySQL) getProperEscapedValue(col *sql.RawBytes, table, columnName string) string {
+func (d *mySQL) getProperEscapedValue(col *sql.RawBytes, columnName string, binaryColumns []string) string {
 	val := "NULL"
 
 	if col != nil {
-		if d.shouldHexBins && d.isColumnBinary(table, columnName) {
+		if d.shouldHexBins && core.InSlice(binaryColumns, strings.Trim(columnName, "`")) {
 			val = fmt.Sprintf("UNHEX('%s')", hex.EncodeToString(*col))
 		} else {
 			val = string(*col)
@@ -455,9 +429,9 @@ func (d *mySQL) evaluateErrors(base error, rows *sql.Rows) error {
 	return nil
 }
 
-func (d *mySQL) selectAllDataFor(table string) (rows *sql.Rows, columns []string, err error) {
+func (d *mySQL) selectAllDataFor(table string, generatedColumns []string) (rows *sql.Rows, columns []string, err error) {
 	var selectQuery string
-	if columns, selectQuery, err = d.getSelectQueryFor(table); err != nil {
+	if columns, selectQuery, err = d.getSelectQueryFor(table, generatedColumns); err != nil {
 		return
 	}
 	if rows, err = d.db.Query(selectQuery); err != nil {
@@ -467,8 +441,8 @@ func (d *mySQL) selectAllDataFor(table string) (rows *sql.Rows, columns []string
 	return
 }
 
-func (d *mySQL) getSelectQueryFor(table string) (cols []string, query string, err error) {
-	cols, err = d.getColumnsForSelect(table, true)
+func (d *mySQL) getSelectQueryFor(table string, generatedColumns []string) (cols []string, query string, err error) {
+	cols, err = d.getColumnsForSelect(table, true, generatedColumns)
 	if err != nil {
 		return cols, "", err
 	}
@@ -487,7 +461,7 @@ func (d *mySQL) getUnlockTablesStatement() string {
 	return "UNLOCK TABLES;\n"
 }
 
-func (d *mySQL) getColumnsForSelect(table string, considerRewriteMap bool) (columns []string, err error) {
+func (d *mySQL) getColumnsForSelect(table string, considerRewriteMap bool, generatedColumns []string) (columns []string, err error) {
 	rows, err := d.db.Query(fmt.Sprintf("SELECT * FROM `%s` LIMIT 1", table))
 	if a := d.evaluateErrors(err, rows); a != nil {
 		return columns, a
@@ -505,7 +479,7 @@ func (d *mySQL) getColumnsForSelect(table string, considerRewriteMap bool) (colu
 	}
 
 	for _, column := range tmp {
-		if d.isColumnExcluded(table, column) {
+		if core.InSlice(generatedColumns, column) {
 			continue
 		}
 
