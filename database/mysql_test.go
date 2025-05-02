@@ -2,6 +2,7 @@ package database
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -31,11 +32,19 @@ func getInternalMySQLInstance(db *sql.DB, randomizerService generator.Service) *
 	return dumper.(*mySQL)
 }
 
+func getInternalMySQLConnInstance(t *testing.T, db *sql.DB, st bool) *mySQLConn {
+	conn, err := newMySQLConn(context.Background(), db, st)
+	assert.Nil(t, err)
+
+	return conn
+}
+
 func TestMySQLFlushTable(t *testing.T) {
 	db, mock := getDB(t)
 	dumper := getInternalMySQLInstance(db, nil)
+	conn := getInternalMySQLConnInstance(t, db, false)
 	mock.ExpectExec("FLUSH TABLES `table`").WillReturnResult(sqlmock.NewResult(0, 1))
-	_, err := dumper.mysqlFlushTable("table")
+	_, err := dumper.mysqlFlushTable(context.Background(), conn, "table")
 	assert.Nil(t, err)
 }
 
@@ -43,7 +52,8 @@ func TestMySQLUnlockTables(t *testing.T) {
 	db, mock := getDB(t)
 	dumper := getInternalMySQLInstance(db, nil)
 	mock.ExpectExec("UNLOCK TABLES").WillReturnResult(sqlmock.NewResult(0, 1))
-	_, err := dumper.mysqlUnlockTables()
+	conn := getInternalMySQLConnInstance(t, db, false)
+	_, err := dumper.mysqlUnlockTables(context.Background(), conn)
 	assert.Nil(t, err)
 }
 
@@ -93,7 +103,8 @@ func TestMySQLDumpCreateTable(t *testing.T) {
 		sqlmock.NewRows([]string{"Table", "Create Table"}).
 			AddRow("table", ddl),
 	)
-	str, err := dumper.getCreateTableStatement("table")
+	conn := getInternalMySQLConnInstance(t, db, false)
+	str, err := dumper.getCreateTableStatement(context.Background(), conn, "table")
 
 	assert.Nil(t, err)
 	assert.Contains(t, str, "DROP TABLE IF EXISTS `table`")
@@ -107,7 +118,8 @@ func TestMySQLDumpCreateTableHandlingErrorWhenScanningRows(t *testing.T) {
 		sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("table", nil),
 	)
 
-	_, err := dumper.getCreateTableStatement("table")
+	conn := getInternalMySQLConnInstance(t, db, false)
+	_, err := dumper.getCreateTableStatement(context.Background(), conn, "table")
 	assert.NotNil(t, err)
 }
 
@@ -118,7 +130,8 @@ func TestMySQLGetColumnsForSelect(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"col1", "col2", "col3"}).AddRow("a", "b", "c"),
 	)
-	columns, err := dumper.getColumnsForSelect("table", true, []string{})
+	conn := getInternalMySQLConnInstance(t, db, false)
+	columns, err := dumper.getColumnsForSelect(context.Background(), conn, "table", true, []string{})
 	assert.Nil(t, err)
 	assert.Equal(t, []string{"`col1`", "NOW() AS `col2`", "`col3`"}, columns)
 
@@ -127,7 +140,7 @@ func TestMySQLGetColumnsForSelect(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"col1", "col2", "col3"}).AddRow("a", "b", "c"),
 	)
-	columns, err = dumper.getColumnsForSelect("table", true, generatedColumns)
+	columns, err = dumper.getColumnsForSelect(context.Background(), conn, "table", true, generatedColumns)
 	assert.Nil(t, err)
 	assert.Equal(t, []string{"NOW() AS `col2`", "`col3`"}, columns)
 }
@@ -138,7 +151,8 @@ func TestMySQLGetColumnsForSelectHandlingErrorWhenQuerying(t *testing.T) {
 	dumper.selectMap = map[string]map[string]string{"table": {"col2": "NOW()"}}
 	err := errors.New("broken")
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(err)
-	columns, dErr := dumper.getColumnsForSelect("table", true, []string{})
+	conn := getInternalMySQLConnInstance(t, db, false)
+	columns, dErr := dumper.getColumnsForSelect(context.Background(), conn, "table", true, []string{})
 	assert.Equal(t, dErr, err)
 	assert.Empty(t, columns)
 }
@@ -151,7 +165,8 @@ func TestMySQLGetSelectQueryFor(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnRows(
 		sqlmock.NewRows([]string{"c1", "c2"}).AddRow("a", "b"),
 	)
-	_, query, err := dumper.getSelectQueryFor("table", []string{})
+	conn := getInternalMySQLConnInstance(t, db, false)
+	_, query, err := dumper.getSelectQueryFor(context.Background(), conn, "table", []string{})
 	assert.Nil(t, err)
 	assert.Equal(t, "SELECT `c1`, NOW() AS `c2` FROM `table` WHERE c1 > 0", query)
 }
@@ -163,7 +178,8 @@ func TestMySQLGetSelectQueryForHandlingError(t *testing.T) {
 	dumper.whereMap = map[string]string{"table": "c1 > 0"}
 	dErr := errors.New("broken")
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(dErr)
-	_, query, err := dumper.getSelectQueryFor("table", []string{})
+	conn := getInternalMySQLConnInstance(t, db, false)
+	_, query, err := dumper.getSelectQueryFor(context.Background(), conn, "table", []string{})
 	assert.Equal(t, dErr, err)
 	assert.Equal(t, "", query)
 }
@@ -175,7 +191,8 @@ func TestMySQLGetRowCount(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM `table` WHERE c1 > 0").WillReturnRows(
 		sqlmock.NewRows([]string{"COUNT(*)"}).AddRow(1234),
 	)
-	count, err := dumper.rowCount("table")
+	conn := getInternalMySQLConnInstance(t, db, false)
+	count, err := dumper.rowCount(context.Background(), conn, "table")
 	assert.Nil(t, err)
 	assert.Equal(t, uint64(1234), count)
 }
@@ -187,7 +204,8 @@ func TestMySQLGetRowCountHandlingError(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM `table` WHERE c1 > 0").WillReturnRows(
 		sqlmock.NewRows([]string{"COUNT(*)"}).AddRow(nil),
 	)
-	count, err := dumper.rowCount("table")
+	conn := getInternalMySQLConnInstance(t, db, false)
+	count, err := dumper.rowCount(context.Background(), conn, "table")
 	assert.NotNil(t, err)
 	assert.Equal(t, uint64(0), count)
 }
@@ -198,7 +216,8 @@ func TestMySQLDumpTableHeader(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM `table`").WillReturnRows(
 		sqlmock.NewRows([]string{"COUNT(*)"}).AddRow(1234),
 	)
-	str, count, err := dumper.getTableHeader("table")
+	conn := getInternalMySQLConnInstance(t, db, false)
+	str, count, err := dumper.getTableHeader(context.Background(), conn, "table")
 	assert.Equal(t, uint64(1234), count)
 	assert.Nil(t, err)
 	assert.Contains(t, str, "Data for table `table`")
@@ -211,19 +230,22 @@ func TestMySQLDumpTableHeaderHandlingError(t *testing.T) {
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM `table`").WillReturnRows(
 		sqlmock.NewRows([]string{"COUNT(*)"}).AddRow(nil),
 	)
-	_, count, err := dumper.getTableHeader("table")
+	conn := getInternalMySQLConnInstance(t, db, false)
+	_, count, err := dumper.getTableHeader(context.Background(), conn, "table")
 	assert.Equal(t, uint64(0), count)
 	assert.NotNil(t, err)
 }
 
 func TestMySQLDumpTableLockWrite(t *testing.T) {
-	dumper := getInternalMySQLInstance(nil, nil)
+	db, _ := getDB(t)
+	dumper := getInternalMySQLInstance(db, nil)
 	str := dumper.getLockTableWriteStatement("table")
 	assert.Contains(t, str, "LOCK TABLES `table` WRITE;")
 }
 
 func TestMySQLDumpUnlockTables(t *testing.T) {
-	dumper := getInternalMySQLInstance(nil, nil)
+	db, _ := getDB(t)
+	dumper := getInternalMySQLInstance(db, nil)
 	str := dumper.getUnlockTablesStatement()
 	assert.Contains(t, str, "UNLOCK TABLES;")
 }
@@ -267,7 +289,8 @@ func TestMySQLDumpTableData(t *testing.T) {
 	mock.ExpectQuery("SELECT `id`, `vegetable` FROM `vegetable_list`").
 		WillReturnRows(rows)
 
-	assert.Nil(t, dumper.dumpTableData(buffer, "vegetable_list", []string{}, []string{}))
+	conn := getInternalMySQLConnInstance(t, db, false)
+	assert.Nil(t, dumper.dumpTableData(context.Background(), conn, buffer, "vegetable_list", []string{}, []string{}))
 
 	assert.Equal(t, strings.Count(buffer.String(), "INSERT INTO `vegetable_list` (`id`, `vegetable`) VALUES"), 6)
 
@@ -282,7 +305,8 @@ func TestMySQLDumpTableDataHandlingErrorFromSelectAllDataFor(t *testing.T) {
 	dumper := getInternalMySQLInstance(db, nil)
 	err := errors.New("fail")
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(err)
-	assert.Equal(t, err, dumper.dumpTableData(buffer, "table", []string{}, []string{}))
+	conn := getInternalMySQLConnInstance(t, db, false)
+	assert.Equal(t, err, dumper.dumpTableData(context.Background(), conn, buffer, "table", []string{}, []string{}))
 }
 
 func Test_mySQL_parseBinaryRelations(t *testing.T) {
