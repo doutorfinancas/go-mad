@@ -139,6 +139,7 @@ func (d *mySQL) Dump(w io.Writer) error {
 
 	errors := make(chan error, len(tables)*2) // buffer to avoid leaking
 	results := make(chan writeResult, len(tables))
+	writingSemaphore := make(chan struct{}, MaxConns)
 
 	tempDir, err := os.MkdirTemp("", "go-mad")
 	if err != nil {
@@ -180,7 +181,7 @@ func (d *mySQL) Dump(w io.Writer) error {
 			readResults := make(chan string, 100)
 			done := make(chan struct{}, 1)
 
-			go writeToTempFile(ctx, tempDir, table, index, readResults, errors, writeResults, done)
+			go writeToTempFile(ctx, tempDir, table, index, readResults, errors, writeResults, done, writingSemaphore)
 
 			var dump string
 			var binaryColumns []string
@@ -717,8 +718,12 @@ func (d *mySQL) getTrigger(ctx context.Context, conn *mySQLConn, triggerName str
 	return ddl + ";\n", nil
 }
 
-func writeToTempFile(ctx context.Context, tempDir string, table string, tableIndex int, source <-chan string, errors chan<- error, results chan<- writeResult, done <-chan struct{}) {
-	// todo add counting semaphore
+func writeToTempFile(ctx context.Context, tempDir string, table string, tableIndex int, source <-chan string, errors chan<- error, results chan<- writeResult, done <-chan struct{}, writingSemaphore chan struct{}) {
+	writingSemaphore <- struct{}{}
+	defer func() {
+		<-writingSemaphore
+	}()
+
 	name := filepath.Join(tempDir, table)
 	f, err := os.Create(name)
 	if err != nil {
