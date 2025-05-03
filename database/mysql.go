@@ -137,7 +137,7 @@ func (d *mySQL) Dump(w io.Writer) error {
 		return err
 	}
 
-	errors := make(chan error, len(tables))
+	errors := make(chan error, len(tables)*2) // buffer to avoid leaking
 	results := make(chan writeResult, len(tables))
 
 	tempDir, err := os.MkdirTemp("", "go-mad")
@@ -145,7 +145,15 @@ func (d *mySQL) Dump(w io.Writer) error {
 		return err
 	}
 
-	defer os.RemoveAll(tempDir)
+	defer func(path string) {
+		err := os.RemoveAll(path)
+		if err != nil {
+			d.log.Error(err.Error())
+		}
+	}(tempDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	nonIgnoredTables := len(tables)
 
@@ -155,9 +163,7 @@ func (d *mySQL) Dump(w io.Writer) error {
 			continue
 		}
 
-		go func(errors chan<- error, writeResults chan<- writeResult, index int, table string) {
-			ctx := context.Background()
-
+		go func(ctx context.Context, errors chan<- error, writeResults chan<- writeResult, index int, table string) {
 			conn, err := newMySQLConn(ctx, d.db, d.singleTransaction) // acts as counting semaphore
 			if err != nil {
 				errors <- err
@@ -172,9 +178,9 @@ func (d *mySQL) Dump(w io.Writer) error {
 			}(d, conn)
 
 			readResults := make(chan string, 100)
-			defer close(readResults)
+			done := make(chan struct{}, 1)
 
-			go writeToTempFile(tempDir, table, index, readResults, errors, writeResults)
+			go writeToTempFile(ctx, tempDir, table, index, readResults, errors, writeResults, done)
 
 			var dump string
 			var binaryColumns []string
@@ -214,13 +220,19 @@ func (d *mySQL) Dump(w io.Writer) error {
 				}
 			}
 
-		}(errors, results, i, table)
+			done <- struct{}{} // signal writeToTempFile we are done sending
+
+		}(ctx, errors, results, i, table)
 	}
 
 	sortedResults := make([]string, len(tables))
 	for i := 0; i < nonIgnoredTables; i++ {
-		result := <-results
-		sortedResults[result.tableIndex] = result.filepath
+		select {
+		case err := <-errors:
+			return err
+		case result := <-results:
+			sortedResults[result.tableIndex] = result.filepath
+		}
 	}
 
 	writer := bufio.NewWriter(w)
@@ -251,7 +263,6 @@ func (d *mySQL) Dump(w io.Writer) error {
 
 	_, err = fmt.Fprintf(w, "SET FOREIGN_KEY_CHECKS = 1;\n")
 
-	ctx := context.Background()
 	conn, err := newMySQLConn(ctx, d.db, d.singleTransaction)
 	if err != nil {
 		return err
@@ -706,9 +717,8 @@ func (d *mySQL) getTrigger(ctx context.Context, conn *mySQLConn, triggerName str
 	return ddl + ";\n", nil
 }
 
-func writeToTempFile(tempDir string, table string, tableIndex int, source <-chan string, errors chan<- error, results chan<- writeResult) {
+func writeToTempFile(ctx context.Context, tempDir string, table string, tableIndex int, source <-chan string, errors chan<- error, results chan<- writeResult, done <-chan struct{}) {
 	// todo add counting semaphore
-	// todo what happens to other goroutines in case of error (context?)
 	name := filepath.Join(tempDir, table)
 	f, err := os.Create(name)
 	if err != nil {
@@ -720,10 +730,18 @@ func writeToTempFile(tempDir string, table string, tableIndex int, source <-chan
 
 	writer := bufio.NewWriter(f)
 
-	for temp := range source {
-		if _, err := writer.WriteString(temp); err != nil {
-			errors <- err
+loop:
+	for {
+		select {
+		case <-ctx.Done():
 			return
+		case <-done:
+			break loop
+		case value := <-source:
+			if _, err := writer.WriteString(value); err != nil {
+				errors <- err
+				return
+			}
 		}
 	}
 
