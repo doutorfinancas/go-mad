@@ -6,15 +6,16 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"io"
-	"regexp"
-	"strings"
-
 	"github.com/doutorfinancas/go-mad/core"
 	"github.com/doutorfinancas/go-mad/generator"
 	_ "github.com/go-sql-driver/mysql" // adds mysql database
 	"github.com/gobwas/glob"
 	"go.uber.org/zap"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 type MySQL interface {
@@ -43,6 +44,11 @@ type mySQL struct {
 	skipDefiner         bool
 	triggerDelimiter    string
 	parallel            bool
+}
+
+type writeResult struct {
+	tableIndex int
+	filepath   string
 }
 
 const (
@@ -121,76 +127,135 @@ func (d *mySQL) SetFilterMap(noData, ignore []string) error {
 // Dump creates a MySQL dump and writes it to an io.Writer
 // returns error in the event something gos wrong in the middle of the dump process
 func (d *mySQL) Dump(w io.Writer) error {
-	var dump string
-	var tmp string
-	var binaryColumns []string
-	var generatedColumns []string
-	dump = fmt.Sprintf("SET NAMES %s;\n", d.charset)
-	dump += "SET FOREIGN_KEY_CHECKS = 0;\n"
+	_, err := fmt.Fprintf(w, "SET NAMES %s;\nSET FOREIGN_KEY_CHECKS = 0;\n", d.charset)
+	if err != nil {
+		return err
+	}
 
 	tables, err := d.getTables()
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
+	errors := make(chan error, len(tables))
+	results := make(chan writeResult, len(tables))
 
-	conn, err := newMySQLConn(ctx, d.db, d.singleTransaction)
+	tempDir, err := os.MkdirTemp("", "go-mad")
 	if err != nil {
 		return err
 	}
 
-	defer func(d *mySQL, conn *mySQLConn) {
-		err := conn.Close()
-		if err != nil {
-			d.log.Error(err.Error())
-		}
-	}(d, conn)
+	defer os.RemoveAll(tempDir)
 
-	for _, table := range tables {
+	nonIgnoredTables := len(tables)
+
+	for i, table := range tables {
 		if d.filterMap[strings.ToLower(table)] == IgnoreMapPlacement {
+			nonIgnoredTables--
 			continue
 		}
 
-		skipData := d.filterMap[strings.ToLower(table)] == NoDataMapPlacement
-		tmp, err = d.getCreateTableStatement(ctx, conn, table)
-		if err != nil {
-			return err
-		}
+		go func(errors chan<- error, writeResults chan<- writeResult, index int, table string) {
+			ctx := context.Background()
 
-		tmp, generatedColumns = d.excludeGeneratedColumns(tmp)
-
-		// this will store if a value we might get is supposed to be hexed cause its binary
-		if d.shouldHexBins {
-			binaryColumns = d.parseBinaryRelations(tmp)
-		}
-
-		dump += tmp
-		if !skipData {
-			dump, err = d.dumpData(ctx, conn, w, dump, table, generatedColumns, binaryColumns)
+			conn, err := newMySQLConn(ctx, d.db, d.singleTransaction) // acts as counting semaphore
 			if err != nil {
-				return err
+				errors <- err
+				return
 			}
-		}
 
-		if _, err = fmt.Fprintln(w, dump); err != nil {
-			return err
-		}
+			defer func(d *mySQL, conn *mySQLConn) {
+				err := conn.Close()
+				if err != nil {
+					d.log.Error(err.Error())
+				}
+			}(d, conn)
 
-		dump = ""
+			readResults := make(chan string, 100)
+			defer close(readResults)
+
+			go writeToTempFile(tempDir, table, index, readResults, errors, writeResults)
+
+			var dump string
+			var binaryColumns []string
+			var generatedColumns []string
+
+			skipData := d.filterMap[strings.ToLower(table)] == NoDataMapPlacement
+			dump, err = d.getCreateTableStatement(ctx, conn, table)
+			if err != nil {
+				errors <- err
+				return
+			}
+
+			dump, generatedColumns = d.excludeGeneratedColumns(dump)
+
+			// this will store if a value we might get is supposed to be hexed cause its binary
+			if d.shouldHexBins {
+				binaryColumns = d.parseBinaryRelations(dump)
+			}
+
+			readResults <- dump
+
+			if !skipData {
+				err = d.dumpData(ctx, conn, readResults, table, generatedColumns, binaryColumns)
+				if err != nil {
+					errors <- err
+					return
+				}
+			}
+
+			if conn.singleTransaction {
+				err = conn.Commit()
+				if err != nil {
+					// we actually don't require this commit to be performed
+					// just making sure everything is fine with the transaction
+					// and no dangling pieces are left. Should log though
+					d.log.Error("could not commit transaction")
+				}
+			}
+
+		}(errors, results, i, table)
 	}
 
-	if conn.singleTransaction {
-		err = conn.Commit()
-		if err != nil {
-			// we actually don't require this commit to be performed
-			// just making sure everything is fine with the transaction
-			// and no dangling pieces are left. Should log though
-			d.log.Error("could not commit transaction")
+	sortedResults := make([]string, len(tables))
+	for i := 0; i < nonIgnoredTables; i++ {
+		result := <-results
+		sortedResults[result.tableIndex] = result.filepath
+	}
+
+	writer := bufio.NewWriter(w)
+
+	for _, inputFile := range sortedResults {
+		if inputFile == "" {
+			continue
 		}
+
+		inFile, err := os.Open(inputFile)
+		if err != nil {
+			return err
+		}
+
+		_, err = io.Copy(writer, inFile)
+		if err != nil {
+			return err
+		}
+
+		if err := inFile.Close(); err != nil {
+			return err
+		}
+	}
+
+	if err = writer.Flush(); err != nil {
+		return err
 	}
 
 	_, err = fmt.Fprintf(w, "SET FOREIGN_KEY_CHECKS = 1;\n")
+
+	ctx := context.Background()
+	conn, err := newMySQLConn(ctx, d.db, d.singleTransaction)
+	if err != nil {
+		return err
+	}
 
 	if d.dumpTrigger {
 		if err := d.dumpTriggers(ctx, conn, w); err != nil {
@@ -248,50 +313,43 @@ func (d *mySQL) excludeGeneratedColumns(createTable string) (string, []string) {
 	return tmp, generatedColumns
 }
 
-func (d *mySQL) dumpData(ctx context.Context, conn *mySQLConn, w io.Writer, dump, table string, generatedColumns, binaryColumns []string) (string, error) {
+func (d *mySQL) dumpData(ctx context.Context, conn *mySQLConn, w chan<- string, table string, generatedColumns, binaryColumns []string) error {
 	var cnt uint64
 	var tmp string
 	var err error
 	if d.lockTables {
 		_, err = d.mysqlFlushTable(ctx, conn, table)
 		if err != nil {
-			return "", err
+			return err
 		}
 	}
 
 	tmp, cnt, err = d.getTableHeader(ctx, conn, table)
 	if err != nil {
-		return "", err
+		return err
 	}
-	dump += tmp
+	w <- tmp
 	if cnt > 0 {
 		if d.addLocks {
-			dump += d.getLockTableWriteStatement(table)
+			w <- d.getLockTableWriteStatement(table)
 		}
-
-		// before the data dump, we need to flush everything to file
-		if _, err = fmt.Fprintln(w, dump); err != nil {
-			return "", err
-		}
-		// and after flush we need to clear the variable
-		dump = ""
 
 		if dErr := d.dumpTableData(ctx, conn, w, table, generatedColumns, binaryColumns); dErr != nil {
-			return "", dErr
+			return dErr
 		}
 
 		if d.addLocks {
-			dump += d.getUnlockTablesStatement()
+			w <- d.getUnlockTablesStatement()
 		}
 	}
 
 	if d.lockTables {
 		if _, dErr := d.mysqlUnlockTables(ctx, conn); dErr != nil {
-			return "", dErr
+			return dErr
 		}
 	}
 
-	return dump, nil
+	return nil
 }
 
 func (d *mySQL) listTables(tables, globs []string) []string {
@@ -343,7 +401,7 @@ func (d *mySQL) getTables() ([]string, error) {
 	return tables, nil
 }
 
-func (d *mySQL) dumpTableData(ctx context.Context, conn *mySQLConn, w io.Writer, table string, generatedColumns, binaryColumns []string) error {
+func (d *mySQL) dumpTableData(ctx context.Context, conn *mySQLConn, w chan<- string, table string, generatedColumns, binaryColumns []string) error {
 	columns, err := d.getColumnsForSelect(ctx, conn, table, false, generatedColumns)
 
 	if err != nil {
@@ -390,13 +448,13 @@ func (d *mySQL) dumpTableData(ctx context.Context, conn *mySQLConn, w io.Writer,
 
 		data = append(data, fmt.Sprintf("( %s )", strings.Join(vals, ", ")))
 		if len(data) >= numRows {
-			fmt.Fprintf(w, "%s\n%s;\n", query, strings.Join(data, ",\n"))
+			w <- fmt.Sprintf("%s\n%s;\n", query, strings.Join(data, ",\n"))
 			data = make([]string, 0)
 		}
 	}
 
 	if len(data) > 0 {
-		fmt.Fprintf(w, "%s\n%s;\n", query, strings.Join(data, ",\n"))
+		w <- fmt.Sprintf("%s\n%s;\n", query, strings.Join(data, ",\n"))
 	}
 
 	return nil
@@ -646,4 +704,36 @@ func (d *mySQL) getTrigger(ctx context.Context, conn *mySQLConn, triggerName str
 	}
 
 	return ddl + ";\n", nil
+}
+
+func writeToTempFile(tempDir string, table string, tableIndex int, source <-chan string, errors chan<- error, results chan<- writeResult) {
+	// todo add counting semaphore
+	// todo what happens to other goroutines in case of error (context?)
+	name := filepath.Join(tempDir, table)
+	f, err := os.Create(name)
+	if err != nil {
+		errors <- err
+		return
+	}
+
+	defer f.Close()
+
+	writer := bufio.NewWriter(f)
+
+	for temp := range source {
+		if _, err := writer.WriteString(temp); err != nil {
+			errors <- err
+			return
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		errors <- err
+		return
+	}
+
+	results <- writeResult{
+		filepath:   name,
+		tableIndex: tableIndex,
+	}
 }
