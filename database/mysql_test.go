@@ -1,13 +1,13 @@
 package database
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/doutorfinancas/go-mad/generator"
@@ -252,7 +252,7 @@ func TestMySQLDumpUnlockTables(t *testing.T) {
 
 func TestMySQLDumpTableData(t *testing.T) {
 	db, mock := getDB(t)
-	buffer := bytes.NewBuffer(make([]byte, 0))
+	buffer := make(chan string, 100)
 
 	ctrl := gomock.NewController(t)
 	gen := mockgenerator.NewMockService(ctrl)
@@ -292,16 +292,26 @@ func TestMySQLDumpTableData(t *testing.T) {
 	conn := getInternalMySQLConnInstance(t, db, false)
 	assert.Nil(t, dumper.dumpTableData(context.Background(), conn, buffer, "vegetable_list", []string{}, []string{}))
 
-	assert.Equal(t, strings.Count(buffer.String(), "INSERT INTO `vegetable_list` (`id`, `vegetable`) VALUES"), 6)
+	var result string
+	stopper := time.After(time.Second)
+	for range r {
+		select {
+		case <-stopper:
+			t.Fatal("timeout")
+		case str := <-buffer:
+			result += str
+		}
+	}
+	assert.Equal(t, strings.Count(result, "INSERT INTO `vegetable_list` (`id`, `vegetable`) VALUES"), len(r))
 
 	for _, row := range r {
-		assert.Contains(t, buffer.String(), fmt.Sprintf("'%s'", row.Value))
+		assert.Contains(t, result, fmt.Sprintf("'%s'", row.Value))
 	}
 }
 
 func TestMySQLDumpTableDataHandlingErrorFromSelectAllDataFor(t *testing.T) {
 	db, mock := getDB(t)
-	buffer := bytes.NewBuffer(make([]byte, 0))
+	buffer := make(chan string, 100)
 	dumper := getInternalMySQLInstance(db, nil)
 	err := errors.New("fail")
 	mock.ExpectQuery("SELECT \\* FROM `table` LIMIT 1").WillReturnError(err)
@@ -416,7 +426,7 @@ func Test_mySQL_ignoresTable(t *testing.T) {
 		t.Error(err)
 	}
 
-	if b.String() != "SET FOREIGN_KEY_CHECKS = 1;\n" {
+	if b.String() != "SET NAMES utf8;\nSET FOREIGN_KEY_CHECKS = 0;\nSET FOREIGN_KEY_CHECKS = 1;\n" {
 		t.Error("No tables should be dumped")
 	}
 }

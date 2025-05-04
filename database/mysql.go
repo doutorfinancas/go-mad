@@ -181,7 +181,7 @@ func (d *mySQL) Dump(w io.Writer) error {
 			readResults := make(chan string, 100)
 			done := make(chan struct{}, 1)
 
-			go writeToTempFile(ctx, tempDir, table, index, readResults, errors, writeResults, done, writingSemaphore)
+			go d.writeToTempFile(ctx, tempDir, table, index, readResults, errors, writeResults, done, writingSemaphore)
 
 			var dump string
 			var binaryColumns []string
@@ -718,7 +718,7 @@ func (d *mySQL) getTrigger(ctx context.Context, conn *mySQLConn, triggerName str
 	return ddl + ";\n", nil
 }
 
-func writeToTempFile(ctx context.Context, tempDir string, table string, tableIndex int, source <-chan string, errors chan<- error, results chan<- writeResult, done <-chan struct{}, writingSemaphore chan struct{}) {
+func (d *mySQL) writeToTempFile(ctx context.Context, tempDir string, table string, tableIndex int, source <-chan string, errors chan<- error, results chan<- writeResult, done <-chan struct{}, writingSemaphore chan struct{}) {
 	writingSemaphore <- struct{}{}
 	defer func() {
 		<-writingSemaphore
