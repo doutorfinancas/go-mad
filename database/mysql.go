@@ -152,8 +152,10 @@ func (d *mySQL) Dump(w io.Writer) error {
 		}
 
 		if _, err = fmt.Fprintln(w, dump); err != nil {
-			d.log.Error(err.Error())
+			return err
 		}
+
+		dump = ""
 	}
 
 	if d.singleTransaction {
