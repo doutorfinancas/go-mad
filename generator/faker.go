@@ -35,7 +35,7 @@ func (s service) ReplaceStringWithFakerWhenRequested(request string) (string, er
 	}
 
 	a := strings.Split(request, ".")
-	if len(a) == 1 {
+	if len(a) < 2 {
 		return request,
 			errors.New("requires more arguments to get a faker func")
 	}
@@ -50,6 +50,11 @@ func (s service) ReplaceStringWithFakerWhenRequested(request string) (string, er
 
 	if len(a) == FakerShortLen {
 		argsString := strings.Split(a[1], "(")
+
+		if len(argsString) < 2 {
+			return request,
+				errors.New("requires more arguments to get a faker func")
+		}
 
 		args, dErr := getMethodArguments(
 			&s.faker,
@@ -73,6 +78,11 @@ func (s service) ReplaceStringWithFakerWhenRequested(request string) (string, er
 	}
 
 	argsString := strings.Split(a[2], "(")
+
+	if len(argsString) < 2 {
+		return request,
+			errors.New("requires more arguments to get a faker func")
+	}
 
 	obj := reflect.Indirect(res[0]).Interface()
 
