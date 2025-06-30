@@ -2,18 +2,20 @@ package database
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"io"
-	"regexp"
-	"strings"
-
 	"github.com/doutorfinancas/go-mad/core"
 	"github.com/doutorfinancas/go-mad/generator"
 	_ "github.com/go-sql-driver/mysql" // adds mysql database
 	"github.com/gobwas/glob"
 	"go.uber.org/zap"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 type MySQL interface {
@@ -35,15 +37,18 @@ type mySQL struct {
 	singleTransaction   bool
 	addLocks            bool
 	randomizerService   generator.Service
-	openTx              *sql.Tx
 	extendedInsertLimit int
-	mapBins             map[string][]string
-	mapExclusionColumns map[string][]string
 	shouldHexBins       bool
 	ignoreGenerated     bool
 	dumpTrigger         bool
 	skipDefiner         bool
 	triggerDelimiter    string
+	parallel            bool
+}
+
+type writeResult struct {
+	tableIndex int
+	filepath   string
 }
 
 const (
@@ -51,6 +56,7 @@ const (
 	IgnoreMapPlacement = "ignore"
 	NoDataMapPlacement = "nodata"
 	FakerUsageCheck    = "faker"
+	MaxConns           = 10
 )
 
 var skipDefinerRegExp = regexp.MustCompile(`(?m)DEFINER=[^ ]* `)
@@ -69,8 +75,6 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 		addLocks:            true,
 		extendedInsertLimit: ExtendedInsertRows,
 		randomizerService:   randomizerService,
-		mapBins:             make(map[string][]string),
-		mapExclusionColumns: make(map[string][]string),
 		shouldHexBins:       false,
 		ignoreGenerated:     false,
 		dumpTrigger:         false,
@@ -81,6 +85,14 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 	err := parseMysqlOptions(m, options)
 	if err != nil {
 		return nil, err
+	}
+
+	if m.parallel {
+		db.SetMaxOpenConns(MaxConns)
+		db.SetMaxIdleConns(MaxConns)
+	} else {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
 	}
 
 	return m, nil
@@ -115,51 +127,136 @@ func (d *mySQL) SetFilterMap(noData, ignore []string) error {
 // Dump creates a MySQL dump and writes it to an io.Writer
 // returns error in the event something gos wrong in the middle of the dump process
 func (d *mySQL) Dump(w io.Writer) error {
-	var dump string
-	var tmp string
-	dump = fmt.Sprintf("SET NAMES %s;\n", d.charset)
-	dump += "SET FOREIGN_KEY_CHECKS = 0;\n"
+	_, err := fmt.Fprintf(w, "SET NAMES %s;\nSET FOREIGN_KEY_CHECKS = 0;\n", d.charset)
+	if err != nil {
+		return err
+	}
 
 	tables, err := d.getTables()
 	if err != nil {
 		return err
 	}
 
-	for _, table := range tables {
+	errors := make(chan error, len(tables)*3) // buffer to avoid leaking
+	results := make(chan writeResult, len(tables))
+	writingSemaphore := make(chan struct{}, MaxConns)
+
+	tempDir, err := os.MkdirTemp("", "go-mad")
+	if err != nil {
+		return err
+	}
+
+	defer func(path string) {
+		if tempErr := os.RemoveAll(path); tempErr != nil {
+			err = tempErr
+		}
+	}(tempDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nonIgnoredTables := len(tables)
+
+	for i, table := range tables {
 		if d.filterMap[strings.ToLower(table)] == IgnoreMapPlacement {
+			nonIgnoredTables--
 			continue
 		}
 
-		skipData := d.filterMap[strings.ToLower(table)] == NoDataMapPlacement
-		tmp, err = d.getCreateTableStatement(table)
-		if err != nil {
-			return err
-		}
-
-		tmp = d.excludeGeneratedColumns(table, tmp)
-
-		// this will store if a value we might get is supposed to be hexed cause its binary
-		if d.shouldHexBins {
-			d.parseBinaryRelations(table, tmp)
-		}
-
-		dump += tmp
-		if !skipData {
-			dump, err = d.dumpData(w, dump, table)
-			if err != nil {
-				return err
-			}
-		}
-
-		if _, err = fmt.Fprintln(w, dump); err != nil {
-			return err
-		}
-
-		dump = ""
+		go d.dumpTable(ctx, tempDir, writingSemaphore, errors, results, i, table)
 	}
 
-	if d.singleTransaction {
-		err = d.openTx.Commit()
+	sortedResults := make([]string, len(tables))
+	for i := 0; i < nonIgnoredTables; i++ {
+		select {
+		case err = <-errors:
+			return err
+		case result := <-results:
+			sortedResults[result.tableIndex] = result.filepath
+		}
+	}
+
+	if err = d.copyToOutput(w, sortedResults); err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(w, "SET FOREIGN_KEY_CHECKS = 1;\n")
+
+	if d.dumpTrigger {
+		conn, connErr := newMySQLConn(ctx, d.db, d.singleTransaction)
+		if connErr != nil {
+			return connErr
+		}
+		defer func(conn *mySQLConn) {
+			if tempErr := conn.Close(); tempErr != nil {
+				err = tempErr
+			}
+		}(conn)
+
+		if err = d.dumpTriggers(ctx, conn, w); err != nil {
+			return err
+		}
+	}
+
+	return err
+}
+
+func (d *mySQL) dumpTable(
+	ctx context.Context,
+	tempDir string,
+	writingSemaphore chan struct{},
+	errors chan<- error,
+	writeResults chan<- writeResult,
+	index int,
+	table string,
+) {
+	conn, err := newMySQLConn(ctx, d.db, d.singleTransaction) // acts as counting semaphore
+	if err != nil {
+		errors <- err
+		return
+	}
+
+	defer func(conn *mySQLConn) {
+		if connErr := conn.Close(); connErr != nil {
+			d.log.Error("could not close mysql connection: " + connErr.Error())
+		}
+	}(conn)
+
+	readResults := make(chan string, 100)
+	done := make(chan struct{}, 1)
+
+	go d.writeToTempFile(ctx, tempDir, table, index, readResults, errors, writeResults, done, writingSemaphore)
+
+	var dump string
+	var binaryColumns []string
+	var generatedColumns []string
+
+	skipData := d.filterMap[strings.ToLower(table)] == NoDataMapPlacement
+	dump, err = d.getCreateTableStatement(ctx, conn, table)
+	if err != nil {
+		errors <- err
+		return
+	}
+
+	dump, generatedColumns = d.excludeGeneratedColumns(dump)
+
+	// this will store if a value we might get is supposed to be hexed cause its binary
+	if d.shouldHexBins {
+		binaryColumns = d.parseBinaryRelations(dump)
+	}
+
+	readResults <- dump
+
+	if !skipData {
+		err = d.dumpData(ctx, conn, readResults, table, generatedColumns, binaryColumns)
+		if err != nil {
+			errors <- err
+			return
+		}
+	}
+
+	if conn.singleTransaction {
+		err = conn.Commit()
 		if err != nil {
 			// we actually don't require this commit to be performed
 			// just making sure everything is fine with the transaction
@@ -168,20 +265,11 @@ func (d *mySQL) Dump(w io.Writer) error {
 		}
 	}
 
-	_, err = fmt.Fprintf(w, "SET FOREIGN_KEY_CHECKS = 1;\n")
-
-	if d.dumpTrigger {
-		if err := d.dumpTriggers(w); err != nil {
-			return err
-		}
-	}
-
-	return err
+	done <- struct{}{} // signal writeToTempFile we are done sending
 }
 
-func (d *mySQL) parseBinaryRelations(table, createTable string) {
-	// no cache, if it is requested, replace existing entry
-	d.mapBins[table] = make([]string, 0)
+func (d *mySQL) parseBinaryRelations(createTable string) []string {
+	binaryColumns := make([]string, 0)
 
 	scanner := bufio.NewScanner(strings.NewReader(createTable))
 	for scanner.Scan() {
@@ -190,14 +278,16 @@ func (d *mySQL) parseBinaryRelations(table, createTable string) {
 			columnName := r.FindAllStringSubmatch(scanner.Text(), -1)
 
 			if len(columnName) > 0 && len(columnName[0]) > 0 {
-				d.mapBins[table] = append(d.mapBins[table], columnName[0][1])
+				binaryColumns = append(binaryColumns, columnName[0][1])
 			}
 		}
 	}
+
+	return binaryColumns
 }
 
-func (d *mySQL) excludeGeneratedColumns(table, createTable string) string {
-	d.mapExclusionColumns[table] = make([]string, 0)
+func (d *mySQL) excludeGeneratedColumns(createTable string) (string, []string) {
+	generatedColumns := make([]string, 0)
 	tmp := ""
 
 	scanner := bufio.NewScanner(strings.NewReader(createTable))
@@ -209,91 +299,66 @@ func (d *mySQL) excludeGeneratedColumns(table, createTable string) string {
 			columnName := r.FindAllStringSubmatch(scanner.Text(), -1)
 
 			if len(columnName) > 0 && len(columnName[0]) > 0 {
-				d.mapExclusionColumns[table] = append(d.mapExclusionColumns[table], columnName[0][1])
+				generatedColumns = append(generatedColumns, columnName[0][1])
 			}
 		}
 	}
 
 	if !d.ignoreGenerated {
-		return createTable
+		return createTable, generatedColumns
 	}
 
 	if createTable[len(createTable)-1:] != "\n" {
-		return tmp[:len(tmp)-1]
+		return tmp[:len(tmp)-1], generatedColumns
 	}
 
-	return tmp
+	return tmp, generatedColumns
 }
 
-func (d *mySQL) isColumnBinary(table, columnName string) bool {
-	columnName = strings.Trim(columnName, "`")
-	if val, ok := d.mapBins[table]; ok {
-		for _, b := range val {
-			if b == columnName {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func (d *mySQL) isColumnExcluded(table, columnName string) bool {
-	if val, ok := d.mapExclusionColumns[table]; ok {
-		for _, b := range val {
-			if b == columnName {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func (d *mySQL) dumpData(w io.Writer, dump, table string) (string, error) {
+func (d *mySQL) dumpData(
+	ctx context.Context,
+	conn *mySQLConn,
+	w chan<- string,
+	table string,
+	generatedColumns,
+	binaryColumns []string,
+) error {
 	var cnt uint64
 	var tmp string
 	var err error
 	if d.lockTables {
-		_, err = d.mysqlFlushTable(table)
+		_, err = d.mysqlFlushTable(ctx, conn, table)
 		if err != nil {
-			return "", err
+			return err
 		}
 	}
 
-	tmp, cnt, err = d.getTableHeader(table)
+	tmp, cnt, err = d.getTableHeader(ctx, conn, table)
 	if err != nil {
-		return "", err
+		return err
 	}
-	dump += tmp
+	w <- tmp
 	if cnt > 0 {
 		if d.addLocks {
-			dump += d.getLockTableWriteStatement(table)
+			w <- d.getLockTableWriteStatement(table)
 		}
 
-		// before the data dump, we need to flush everything to file
-		if _, err = fmt.Fprintln(w, dump); err != nil {
-			return "", err
-		}
-		// and after flush we need to clear the variable
-		dump = ""
-
-		if dErr := d.dumpTableData(w, table); dErr != nil {
-			return "", dErr
+		if dErr := d.dumpTableData(ctx, conn, w, table, generatedColumns, binaryColumns); dErr != nil {
+			return dErr
 		}
 
 		if d.addLocks {
-			dump += d.getUnlockTablesStatement()
+			w <- d.getUnlockTablesStatement()
 		}
 	}
 
 	if d.lockTables {
-		if _, dErr := d.mysqlUnlockTables(); err != nil {
-			return "", dErr
+		if _, dErr := d.mysqlUnlockTables(ctx, conn); dErr != nil {
+			return dErr
 		}
 	}
 
-	return dump, nil
+	return nil
 }
 
 func (d *mySQL) listTables(tables, globs []string) []string {
@@ -345,14 +410,21 @@ func (d *mySQL) getTables() ([]string, error) {
 	return tables, nil
 }
 
-func (d *mySQL) dumpTableData(w io.Writer, table string) error {
-	columns, err := d.getColumnsForSelect(table, false)
+func (d *mySQL) dumpTableData(
+	ctx context.Context,
+	conn *mySQLConn,
+	w chan<- string,
+	table string,
+	generatedColumns,
+	binaryColumns []string,
+) error {
+	columns, err := d.getColumnsForSelect(ctx, conn, table, false, generatedColumns)
 
 	if err != nil {
 		return err
 	}
 
-	rows, _, err := d.selectAllDataFor(table)
+	rows, _, err := d.selectAllDataFor(ctx, conn, table, generatedColumns)
 	if a := d.evaluateErrors(err, rows); a != nil {
 		return a
 	}
@@ -382,33 +454,33 @@ func (d *mySQL) dumpTableData(w io.Writer, table string) error {
 	query := d.generateInsertStatement(columns, table)
 	var data []string
 	for rows.Next() {
-		if dErr := rows.Scan(scanArgs...); err != nil {
+		if dErr := rows.Scan(scanArgs...); dErr != nil {
 			return dErr
 		}
 		var vals []string
 		for i, col := range values {
-			vals = append(vals, d.getProperEscapedValue(col, table, columns[i]))
+			vals = append(vals, d.getProperEscapedValue(col, columns[i], binaryColumns))
 		}
 
 		data = append(data, fmt.Sprintf("( %s )", strings.Join(vals, ", ")))
 		if len(data) >= numRows {
-			fmt.Fprintf(w, "%s\n%s;\n", query, strings.Join(data, ",\n"))
+			w <- fmt.Sprintf("%s\n%s;\n", query, strings.Join(data, ",\n"))
 			data = make([]string, 0)
 		}
 	}
 
 	if len(data) > 0 {
-		fmt.Fprintf(w, "%s\n%s;\n", query, strings.Join(data, ",\n"))
+		w <- fmt.Sprintf("%s\n%s;\n", query, strings.Join(data, ",\n"))
 	}
 
 	return nil
 }
 
-func (d *mySQL) getProperEscapedValue(col *sql.RawBytes, table, columnName string) string {
+func (d *mySQL) getProperEscapedValue(col *sql.RawBytes, columnName string, binaryColumns []string) string {
 	val := "NULL"
 
 	if col != nil {
-		if d.shouldHexBins && d.isColumnBinary(table, columnName) {
+		if d.shouldHexBins && core.InSlice(binaryColumns, strings.Trim(columnName, "`")) {
 			val = fmt.Sprintf("UNHEX('%s')", hex.EncodeToString(*col))
 		} else {
 			val = string(*col)
@@ -433,9 +505,9 @@ func (d *mySQL) generateInsertStatement(cols []string, table string) string {
 	return s[:len(s)-2] + ") VALUES"
 }
 
-func (d *mySQL) getTableHeader(table string) (str string, count uint64, err error) {
+func (d *mySQL) getTableHeader(ctx context.Context, conn *mySQLConn, table string) (str string, count uint64, err error) {
 	str = fmt.Sprintf("\n--\n-- Data for table `%s`", table)
-	count, err = d.rowCount(table)
+	count, err = d.rowCount(ctx, conn, table)
 
 	if err != nil {
 		return "", 0, err
@@ -457,20 +529,30 @@ func (d *mySQL) evaluateErrors(base error, rows *sql.Rows) error {
 	return nil
 }
 
-func (d *mySQL) selectAllDataFor(table string) (rows *sql.Rows, columns []string, err error) {
+func (d *mySQL) selectAllDataFor(
+	ctx context.Context,
+	conn *mySQLConn,
+	table string,
+	generatedColumns []string,
+) (rows *sql.Rows, columns []string, err error) {
 	var selectQuery string
-	if columns, selectQuery, err = d.getSelectQueryFor(table); err != nil {
+	if columns, selectQuery, err = d.getSelectQueryFor(ctx, conn, table, generatedColumns); err != nil {
 		return
 	}
-	if rows, err = d.db.Query(selectQuery); err != nil {
+	if rows, err = conn.conn.QueryContext(ctx, selectQuery); err != nil {
 		return
 	}
 
 	return
 }
 
-func (d *mySQL) getSelectQueryFor(table string) (cols []string, query string, err error) {
-	cols, err = d.getColumnsForSelect(table, true)
+func (d *mySQL) getSelectQueryFor(
+	ctx context.Context,
+	conn *mySQLConn,
+	table string,
+	generatedColumns []string,
+) (cols []string, query string, err error) {
+	cols, err = d.getColumnsForSelect(ctx, conn, table, true, generatedColumns)
 	if err != nil {
 		return cols, "", err
 	}
@@ -489,8 +571,14 @@ func (d *mySQL) getUnlockTablesStatement() string {
 	return "UNLOCK TABLES;\n"
 }
 
-func (d *mySQL) getColumnsForSelect(table string, considerRewriteMap bool) (columns []string, err error) {
-	rows, err := d.db.Query(fmt.Sprintf("SELECT * FROM `%s` LIMIT 1", table))
+func (d *mySQL) getColumnsForSelect(
+	ctx context.Context,
+	conn *mySQLConn,
+	table string,
+	considerRewriteMap bool,
+	generatedColumns []string,
+) (columns []string, err error) {
+	rows, err := conn.conn.QueryContext(ctx, fmt.Sprintf("SELECT * FROM `%s` LIMIT 1", table))
 	if a := d.evaluateErrors(err, rows); a != nil {
 		return columns, a
 	}
@@ -507,7 +595,7 @@ func (d *mySQL) getColumnsForSelect(table string, considerRewriteMap bool) (colu
 	}
 
 	for _, column := range tmp {
-		if d.isColumnExcluded(table, column) {
+		if core.InSlice(generatedColumns, column) {
 			continue
 		}
 
@@ -526,75 +614,57 @@ func (d *mySQL) getColumnsForSelect(table string, considerRewriteMap bool) (colu
 	return columns, nil
 }
 
-func (d *mySQL) rowCount(table string) (count uint64, err error) {
+func (d *mySQL) rowCount(ctx context.Context, conn *mySQLConn, table string) (uint64, error) {
 	query := fmt.Sprintf("SELECT COUNT(*) FROM `%s`", table)
 	if where, ok := d.whereMap[strings.ToLower(table)]; ok {
 		query = fmt.Sprintf("%s WHERE %s", query, where)
 	}
-	row := d.useTransactionOrDBQueryRow(query)
-	if err = row.Scan(&count); err != nil {
-		return
+
+	var count uint64
+	row, err := conn.useTransactionOrDBQueryRow(ctx, query)
+	if err != nil {
+		return 0, err
 	}
-	return
+
+	if err = row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
-func (d *mySQL) getCreateTableStatement(table string) (string, error) {
+func (d *mySQL) getCreateTableStatement(ctx context.Context, conn *mySQLConn, table string) (string, error) {
 	s := fmt.Sprintf("\n--\n-- Structure for table `%s`\n--\n\n", table)
 	s += fmt.Sprintf("DROP TABLE IF EXISTS `%s`;\n", table)
-	row := d.useTransactionOrDBQueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`", table))
+	row, err := conn.useTransactionOrDBQueryRow(ctx, fmt.Sprintf("SHOW CREATE TABLE `%s`", table))
+	if err != nil {
+		return "", err
+	}
+
 	var tname, ddl string
-	if err := row.Scan(&tname, &ddl); err != nil {
+	if err = row.Scan(&tname, &ddl); err != nil {
 		return "", err
 	}
 	s += fmt.Sprintf("%s;\n", ddl)
 	return s, nil
 }
 
-func (d *mySQL) mysqlFlushTable(table string) (sql.Result, error) {
-	return d.useTransactionOrDBExec(fmt.Sprintf("FLUSH TABLES `%s` WITH READ LOCK", table))
+func (d *mySQL) mysqlFlushTable(ctx context.Context, conn *mySQLConn, table string) (sql.Result, error) {
+	return conn.useTransactionOrDBExec(ctx, fmt.Sprintf("FLUSH TABLES `%s` WITH READ LOCK", table))
 }
 
 // Release the global read locks
-func (d *mySQL) mysqlUnlockTables() (sql.Result, error) {
-	return d.useTransactionOrDBExec("UNLOCK TABLES")
+func (d *mySQL) mysqlUnlockTables(ctx context.Context, conn *mySQLConn) (sql.Result, error) {
+	return conn.useTransactionOrDBExec(ctx, "UNLOCK TABLES")
 }
 
-func (d *mySQL) useTransactionOrDBQueryRow(query string) *sql.Row {
-	if d.singleTransaction {
-		return d.getTransaction().QueryRow(query)
-	}
-
-	return d.db.QueryRow(query)
-}
-
-func (d *mySQL) useTransactionOrDBExec(query string) (sql.Result, error) {
-	if d.singleTransaction {
-		return d.getTransaction().Exec(query)
-	}
-
-	return d.db.Exec(query)
-}
-
-func (d *mySQL) getTransaction() *sql.Tx {
-	if d.openTx == nil {
-		var err error
-		d.openTx, err = d.db.Begin()
-		if err != nil {
-			panic("could not start a transaction")
-		}
-	}
-
-	return d.openTx
-}
-
-func (d *mySQL) dumpTriggers(w io.Writer) error {
-	triggers, err := d.getTriggers()
+func (d *mySQL) dumpTriggers(ctx context.Context, conn *mySQLConn, w io.Writer) error {
+	triggers, err := d.getTriggers(ctx, conn)
 	if err != nil {
 		return err
 	}
 
 	for _, trigger := range triggers {
-		ddl, err := d.getTrigger(trigger)
+		ddl, err := d.getTrigger(ctx, conn, trigger)
 
 		if err != nil {
 			return err
@@ -618,10 +688,10 @@ func (d *mySQL) dumpTriggers(w io.Writer) error {
 	return nil
 }
 
-func (d *mySQL) getTriggers() ([]string, error) {
+func (d *mySQL) getTriggers(ctx context.Context, conn *mySQLConn) ([]string, error) {
 	triggers := make([]string, 0)
 
-	rows, err := d.db.Query("SHOW TRIGGERS")
+	rows, err := conn.conn.QueryContext(ctx, "SHOW TRIGGERS")
 	if a := d.evaluateErrors(err, rows); a != nil {
 		return triggers, a
 	}
@@ -649,10 +719,14 @@ func (d *mySQL) getTriggers() ([]string, error) {
 	return triggers, nil
 }
 
-func (d *mySQL) getTrigger(triggerName string) (string, error) {
+func (d *mySQL) getTrigger(ctx context.Context, conn *mySQLConn, triggerName string) (string, error) {
 	var ddl, unknown string
 
-	row := d.useTransactionOrDBQueryRow(fmt.Sprintf("SHOW CREATE TRIGGER `%s`", triggerName))
+	row, err := conn.useTransactionOrDBQueryRow(ctx, fmt.Sprintf("SHOW CREATE TRIGGER `%s`", triggerName))
+	if err != nil {
+		return "", err
+	}
+
 	if err := row.Scan(&unknown, &unknown, &ddl, &unknown, &unknown, &unknown, &unknown); err != nil {
 		return "", err
 	}
@@ -662,4 +736,86 @@ func (d *mySQL) getTrigger(triggerName string) (string, error) {
 	}
 
 	return ddl + ";\n", nil
+}
+
+func (d *mySQL) writeToTempFile(
+	ctx context.Context,
+	tempDir, table string,
+	tableIndex int,
+	source <-chan string,
+	errors chan<- error,
+	results chan<- writeResult,
+	done <-chan struct{},
+	writingSemaphore chan struct{},
+) {
+	writingSemaphore <- struct{}{}
+	defer func() {
+		<-writingSemaphore
+	}()
+
+	name := filepath.Join(tempDir, table)
+	f, err := os.Create(name)
+	if err != nil {
+		errors <- err
+		return
+	}
+
+	defer f.Close()
+
+	writer := bufio.NewWriter(f)
+
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			break loop
+		case value := <-source:
+			if _, err := writer.WriteString(value); err != nil {
+				errors <- err
+				return
+			}
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		errors <- err
+		return
+	}
+
+	results <- writeResult{
+		filepath:   name,
+		tableIndex: tableIndex,
+	}
+}
+
+func (d *mySQL) copyToOutput(output io.Writer, inputFiles []string) error {
+	writer := bufio.NewWriter(output)
+
+	for _, inputFile := range inputFiles {
+		if inputFile == "" {
+			continue
+		}
+
+		inFile, err := os.Open(inputFile)
+		if err != nil {
+			return err
+		}
+
+		_, err = io.Copy(writer, inFile)
+		if err != nil {
+			return err
+		}
+
+		if err := inFile.Close(); err != nil {
+			return err
+		}
+	}
+
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	return nil
 }

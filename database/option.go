@@ -42,6 +42,8 @@ func parseMysqlOptions(m *mySQL, options []Option) error {
 			m.extendedInsertLimit = i
 		case "trigger-delimiter":
 			m.triggerDelimiter = v.value
+		case "parallel":
+			m.parallel = true
 		default:
 			return errors.New("unknown option")
 		}

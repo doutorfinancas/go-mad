@@ -71,6 +71,17 @@ func TestOption(t *testing.T) {
 			"passing an empty value",
 			true,
 		},
+		{
+			[]Option{
+				OptionValue("parallel", ""),
+			},
+			&mySQL{},
+			&mySQL{
+				parallel: true,
+			},
+			"test parallel option",
+			false,
+		},
 	}
 	for _, tt := range testCases {
 		err := parseMysqlOptions(tt.mysql, tt.options)

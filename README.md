@@ -75,6 +75,7 @@ please refer to faker documentation [here](https://pkg.go.dev/github.com/jaswdr/
 | --ignore-generated   | strips generated columns from create statements                                             | bool   |
 | --dump-trigger       | dumps triggers from database                                                                | bool   |
 | --skip-definer       | skips definer of triggers dumps (used in conjuntion with `--dump-trigger`)                  | bool   |
+| --parallel           | runs statements in parallel in order to optimize speed for the dump                         | bool   |
 
 ## Configuration Example
 ```yaml
@@ -114,6 +115,6 @@ To do so:
 ## Next Steps (ToDos)
 - [X] Adds support for triggers (thank you @shyim)
 - [ ] Adds support to exporting multiple databases at a time
-- [ ] Exports run in goroutines to accelerate when `--parallel` is passed
+- [x] Exports run in goroutines to accelerate when `--parallel` is passed
 - [ ] Add support for env vars
 - [ ] Feel free to expand this list
