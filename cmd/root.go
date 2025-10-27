@@ -141,6 +141,10 @@ var rootCmd = &cobra.Command{
 			opt = append(opt, database.OptionValue("dump-trigger", ""))
 		}
 
+		if dumpViews {
+			opt = append(opt, database.OptionValue("dump-views", ""))
+		}
+
 		if skipDefiner {
 			opt = append(opt, database.OptionValue("skip-definer", ""))
 		}
@@ -220,6 +224,7 @@ var (
 	getVersion        bool
 	insertIntoLimit   string
 	dumpTrigger       bool
+	dumpViews         bool
 	skipDefiner       bool
 	triggerDelimiter  string
 )
@@ -362,6 +367,13 @@ func init() {
 		"dump-trigger",
 		false,
 		"dump triggers",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&dumpViews,
+		"dump-views",
+		false,
+		"dump views",
 	)
 
 	rootCmd.PersistentFlags().BoolVar(

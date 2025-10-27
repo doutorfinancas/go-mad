@@ -42,6 +42,7 @@ type mySQL struct {
 	shouldHexBins       bool
 	ignoreGenerated     bool
 	dumpTrigger         bool
+	dumpViews           bool
 	skipDefiner         bool
 	triggerDelimiter    string
 }
@@ -73,6 +74,7 @@ func NewMySQLDumper(db *sql.DB, logger *zap.Logger, randomizerService generator.
 		mapExclusionColumns: make(map[string][]string),
 		shouldHexBins:       false,
 		ignoreGenerated:     false,
+		dumpViews:           false,
 		dumpTrigger:         false,
 		skipDefiner:         false,
 		triggerDelimiter:    "",
@@ -101,11 +103,21 @@ func (d *mySQL) SetFilterMap(noData, ignore []string) error {
 	if err != nil {
 		return err
 	}
+
+	v, err := d.getViews()
+	if err != nil {
+		return err
+	}
+
 	for _, table := range d.listTables(t, noData) {
 		d.filterMap[strings.ToLower(table)] = NoDataMapPlacement
 	}
 
 	for _, table := range d.listTables(t, ignore) {
+		d.filterMap[strings.ToLower(table)] = IgnoreMapPlacement
+	}
+
+	for _, table := range d.listViews(v, ignore) {
 		d.filterMap[strings.ToLower(table)] = IgnoreMapPlacement
 	}
 
@@ -169,6 +181,32 @@ func (d *mySQL) Dump(w io.Writer) error {
 	}
 
 	_, err = fmt.Fprintf(w, "SET FOREIGN_KEY_CHECKS = 1;\n")
+
+	if d.dumpViews {
+		views, err := d.getViews()
+		if err != nil {
+			return err
+		}
+
+		for _, view := range views {
+			if d.filterMap[strings.ToLower(view)] == IgnoreMapPlacement {
+				continue
+			}
+
+			tmp, err = d.getCreateViewStatement(view)
+			if err != nil {
+				return err
+			}
+
+			dump += tmp
+
+			if _, err = fmt.Fprintln(w, dump); err != nil {
+				return err
+			}
+
+			dump = ""
+		}
+	}
 
 	if d.dumpTrigger {
 		if err := d.dumpTriggers(w); err != nil {
@@ -343,6 +381,55 @@ func (d *mySQL) getTables() ([]string, error) {
 	}
 
 	return tables, nil
+}
+
+func (d *mySQL) listViews(views, globs []string) []string {
+	var globbed []string
+
+	for _, query := range globs {
+		g := glob.MustCompile(query)
+
+		for _, view := range views {
+			if g.Match(view) {
+				globbed = core.AppendIfNotExists(globbed, view)
+			}
+		}
+	}
+
+	return globbed
+}
+
+func (d *mySQL) getViews() ([]string, error) {
+	views := make([]string, 0)
+
+	rows, err := d.db.Query("SHOW FULL TABLES")
+	if a := d.evaluateErrors(err, rows); a != nil {
+		return views, a
+	}
+
+	defer func(rows *sql.Rows) {
+		dErr := rows.Close()
+		if dErr != nil {
+			d.log.Error(
+				dErr.Error(),
+				zap.String("internal", "failed to close rows while getting views"),
+			)
+		}
+	}(rows)
+
+	for rows.Next() {
+		var tableName, tableType string
+
+		if dErr := rows.Scan(&tableName, &tableType); dErr != nil {
+			return views, dErr
+		}
+
+		if tableType == "VIEW" {
+			views = append(views, tableName)
+		}
+	}
+
+	return views, nil
 }
 
 func (d *mySQL) dumpTableData(w io.Writer, table string) error {
@@ -546,6 +633,22 @@ func (d *mySQL) getCreateTableStatement(table string) (string, error) {
 	if err := row.Scan(&tname, &ddl); err != nil {
 		return "", err
 	}
+	s += fmt.Sprintf("%s;\n", ddl)
+	return s, nil
+}
+
+func (d *mySQL) getCreateViewStatement(view string) (string, error) {
+	s := fmt.Sprintf("\n--\n-- Definition for view `%s`\n--\n\n", view)
+	row := d.useTransactionOrDBQueryRow(fmt.Sprintf("SHOW CREATE VIEW `%s`", view))
+	var vname, ddl string
+	if err := row.Scan(&vname, &ddl); err != nil {
+		return "", err
+	}
+
+	if d.skipDefiner {
+		ddl = skipDefinerRegExp.ReplaceAllString(ddl, "")
+	}
+
 	s += fmt.Sprintf("%s;\n", ddl)
 	return s, nil
 }

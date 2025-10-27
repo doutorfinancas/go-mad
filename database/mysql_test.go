@@ -53,7 +53,8 @@ func TestMySQLGetTables(t *testing.T) {
 	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
 		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
 			AddRow("table1", "BASE TABLE").
-			AddRow("table2", "BASE TABLE"),
+			AddRow("table2", "BASE TABLE").
+			AddRow("view3", "VIEW"),
 	)
 	tables, err := dumper.getTables()
 	assert.Equal(t, []string{"table1", "table2"}, tables)
@@ -108,6 +109,67 @@ func TestMySQLDumpCreateTableHandlingErrorWhenScanningRows(t *testing.T) {
 	)
 
 	_, err := dumper.getCreateTableStatement("table")
+	assert.NotNil(t, err)
+}
+
+func TestMySQLGetViews(t *testing.T) {
+	db, mock := getDB(t)
+	dumper := getInternalMySQLInstance(db, nil)
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("table1", "BASE TABLE").
+			AddRow("table2", "BASE TABLE").
+			AddRow("view3", "VIEW"),
+	)
+	views, err := dumper.getViews()
+	assert.Equal(t, []string{"view3"}, views)
+	assert.Nil(t, err)
+}
+
+func TestMySQLGetTablesHandlingErrorWhenListingViews(t *testing.T) {
+	db, mock := getDB(t)
+	dumper := getInternalMySQLInstance(db, nil)
+	expectedErr := errors.New("broken")
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnError(expectedErr)
+	tables, err := dumper.getViews()
+	assert.Equal(t, []string{}, tables)
+	assert.Equal(t, expectedErr, err)
+}
+
+func TestMySQLGetViewsHandlingErrorWhenScanningRow(t *testing.T) {
+	db, mock := getDB(t)
+	dumper := getInternalMySQLInstance(db, nil)
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).AddRow(1, nil),
+	)
+	views, err := dumper.getViews()
+	assert.Equal(t, []string{}, views)
+	assert.NotNil(t, err)
+}
+
+func TestMySQLDumpCreateView(t *testing.T) {
+	var ddl = "CREATE DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `view` (`id`, `name`)" +
+		"AS SELECT `table`.`id` AS `id`, `table`.`name` AS `name` FROM `table`;"
+	db, mock := getDB(t)
+	dumper := getInternalMySQLInstance(db, nil)
+	mock.ExpectQuery("SHOW CREATE VIEW `view`").WillReturnRows(
+		sqlmock.NewRows([]string{"View", "Create View"}).
+			AddRow("view", ddl),
+	)
+	str, err := dumper.getCreateViewStatement("view")
+
+	assert.Nil(t, err)
+	assert.Contains(t, str, ddl)
+}
+
+func TestMySQLDumpCreateViewHandlingErrorWhenScanningRows(t *testing.T) {
+	db, mock := getDB(t)
+	dumper := getInternalMySQLInstance(db, nil)
+	mock.ExpectQuery("SHOW CREATE VIEW `view`").WillReturnRows(
+		sqlmock.NewRows([]string{"View", "Create View"}).AddRow("view", nil),
+	)
+
+	_, err := dumper.getCreateViewStatement("view")
 	assert.NotNil(t, err)
 }
 
@@ -508,6 +570,11 @@ func Test_mySQL_ignoresTable(t *testing.T) {
 			AddRow("OLD_table", "BASE TABLE"),
 	)
 
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("OLD_table", "BASE TABLE"),
+	)
+
 	dumper := getInternalMySQLInstance(db, nil)
 
 	dumper.SetFilterMap([]string{}, []string{"OLD_table"})
@@ -570,6 +637,44 @@ func Test_mySQL_dumpsTriggers(t *testing.T) {
 	}
 }
 
+func Test_mySQL_dumpsViews(t *testing.T) {
+	db, mock := getDB(t)
+
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("view", "VIEW"),
+	)
+
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("view", "VIEW"),
+	)
+
+	var ddl = "CREATE DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `view` (`id`, `name`) " +
+		"AS SELECT `table`.`id` AS `id`, `table`.`name` AS `name` FROM `table`;"
+
+	mock.ExpectQuery("SHOW CREATE VIEW `view`").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("view", ddl),
+	)
+
+	dumper := getInternalMySQLInstance(db, nil)
+
+	dumper.dumpViews = true
+
+	b := new(strings.Builder)
+
+	err := dumper.Dump(b)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	if !strings.Contains(b.String(), "CREATE DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `view` (`id`, `name`) AS SELECT `table`.`id` AS `id`, `table`.`name` AS `name` FROM `table`;") {
+		t.Error("Trigger not dumped")
+	}
+}
+
 func Test_mySQL_dumpsTriggersIgnoresDefiners(t *testing.T) {
 	db, mock := getDB(t)
 
@@ -604,5 +709,44 @@ func Test_mySQL_dumpsTriggersIgnoresDefiners(t *testing.T) {
 
 	if !strings.Contains(b.String(), "CREATE TRIGGER `ins_sum` BEFORE INSERT ON `account` FOR EACH ROW SET @sum = @sum + NEW.amount;") {
 		t.Error("Trigger not dumped")
+	}
+}
+
+func Test_mySQL_dumpsViewsIgnoresDefiners(t *testing.T) {
+	db, mock := getDB(t)
+
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("view", "VIEW"),
+	)
+
+	mock.ExpectQuery("SHOW FULL TABLES").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("view", "VIEW"),
+	)
+
+	var ddl = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `view` (`id`, `name`) " +
+		"AS SELECT `table`.`id` AS `id`, `table`.`name` AS `name` FROM `table`;"
+
+	mock.ExpectQuery("SHOW CREATE VIEW `view`").WillReturnRows(
+		sqlmock.NewRows([]string{"Tables_in_database", "Table_type"}).
+			AddRow("view", ddl),
+	)
+
+	dumper := getInternalMySQLInstance(db, nil)
+
+	dumper.dumpViews = true
+	dumper.skipDefiner = true
+
+	b := new(strings.Builder)
+
+	err := dumper.Dump(b)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	if !strings.Contains(b.String(), "CREATE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW `view` (`id`, `name`) AS SELECT `table`.`id` AS `id`, `table`.`name` AS `name` FROM `table`") {
+		t.Error("View not dumped")
 	}
 }
