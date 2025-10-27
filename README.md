@@ -54,27 +54,28 @@ please refer to faker documentation [here](https://pkg.go.dev/github.com/jaswdr/
 
 ## Available Flags (all are optional)
 
-| Flag (short)         | Description                                                                                 | Type   |
-|----------------------|---------------------------------------------------------------------------------------------|--------|
-| --host (-h)          | your MySQL host, default `127.0.0.1`                                                        | string |
-| --user (-u)          | your user to authenticate in mysql, no default                                              | string |
-| --password (-p)      | password to authenticate in mysql, no default                                               | string |
-| --port (-P)          | port to your mysql installation, default `3306`                                             | string |
-| --config (-c)        | path to your go-mad config file, example below                                              | string |
-| --output (-o)        | path to the intended output file, default STDOUT                                            | string |
-| --char-set           | uses SET NAMES command with provided charset, default utf8                                  | string |
-| --trigger-definer    | changes trigger delimiter to the string you pass, default is `';'`                          | string |
-| --insert-into-limit  | defines limit to be used with each insert statement, cannot use with --quick, default `100` | int    |
-| --debug (-v)         | turns on verbose mode if passed                                                             | bool   |
-| --quiet (-q)         | disables log output if passed                                                               | bool   |
-| --skip-lock-tables   | skips locking mysql tables when dumping                                                     | bool   |
-| --single-transaction | does the dump within a single transaction by issuing a BEGIN Command                        | bool   |
-| --quick              | dump writes row by row as opposed to using extended inserts                                 | bool   |
-| --add-locks          | add write lock statements to the dump                                                       | bool   |
-| --hex-encode         | performs hex encoding and respective decode statement for binary values                     | bool   |
-| --ignore-generated   | strips generated columns from create statements                                             | bool   |
-| --dump-trigger       | dumps triggers from database                                                                | bool   |
-| --skip-definer       | skips definer of triggers dumps (used in conjuntion with `--dump-trigger`)                  | bool   |
+| Flag (short)         | Description                                                                                  | Type   |
+|----------------------|----------------------------------------------------------------------------------------------|--------|
+| --host (-h)          | your MySQL host, default `127.0.0.1`                                                         | string |
+| --user (-u)          | your user to authenticate in mysql, no default                                               | string |
+| --password (-p)      | password to authenticate in mysql, no default                                                | string |
+| --port (-P)          | port to your mysql installation, default `3306`                                              | string |
+| --config (-c)        | path to your go-mad config file, example below                                               | string |
+| --output (-o)        | path to the intended output file, default STDOUT                                             | string |
+| --char-set           | uses SET NAMES command with provided charset, default utf8                                   | string |
+| --trigger-definer    | changes trigger delimiter to the string you pass, default is `';'`                           | string |
+| --insert-into-limit  | defines limit to be used with each insert statement, cannot use with --quick, default `100`  | int    |
+| --debug (-v)         | turns on verbose mode if passed                                                              | bool   |
+| --quiet (-q)         | disables log output if passed                                                                | bool   |
+| --skip-lock-tables   | skips locking mysql tables when dumping                                                      | bool   |
+| --single-transaction | does the dump within a single transaction by issuing a BEGIN Command                         | bool   |
+| --quick              | dump writes row by row as opposed to using extended inserts                                  | bool   |
+| --add-locks          | add write lock statements to the dump                                                        | bool   |
+| --hex-encode         | performs hex encoding and respective decode statement for binary values                      | bool   |
+| --ignore-generated   | strips generated columns from create statements                                              | bool   |
+| --dump-trigger       | dumps triggers from database                                                                 | bool   |
+| --dump-views         | dumps views from database                                                                    | bool   |
+| --skip-definer       | skips definer of triggers dumps (used in conjuntion with `--dump-trigger` or `--dump-views`) | bool   |
 
 ## Configuration Example
 ```yaml
