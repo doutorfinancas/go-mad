@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jaswdr/faker"
+	"github.com/jaswdr/faker/v2"
 )
 
 type Service interface {
