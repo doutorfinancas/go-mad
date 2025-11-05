@@ -297,7 +297,7 @@ func Test_mySQL_parseBinaryRelations(t *testing.T) {
 		args args
 	}{
 		{
-			"manage create table successfully",
+			"manage create table successfully with binary",
 			args{
 				"table",
 				`CREATE TABLE ` + "`table`" + ` (
@@ -307,6 +307,53 @@ func Test_mySQL_parseBinaryRelations(t *testing.T) {
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 				map[string][]string{
 					"table": {"id"},
+				},
+			},
+		},
+		{
+			"manage create table successfully with blob",
+			args{
+				"table",
+				`CREATE TABLE ` + "`table`" + ` (
+  ` + "`id`" + ` int(11) NOT NULL AUTO_INCREMENT,
+  ` + "`data`" + ` blob,
+  ` + "`s`" + ` char(60) DEFAULT NULL,
+  PRIMARY KEY (` + "`id`" + `)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+				map[string][]string{
+					"table": {"data"},
+				},
+			},
+		},
+		{
+			"manage create table with both binary and blob",
+			args{
+				"table",
+				`CREATE TABLE ` + "`table`" + ` (
+  ` + "`id`" + ` binary(16) NOT NULL,
+  ` + "`data`" + ` blob,
+  ` + "`content`" + ` longblob,
+  ` + "`s`" + ` char(60) DEFAULT NULL,
+  PRIMARY KEY (` + "`id`" + `)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+				map[string][]string{
+					"table": {"id", "data", "content"},
+				},
+			},
+		},
+		{
+			"manage create table with tinyblob, mediumblob, and longblob",
+			args{
+				"table",
+				`CREATE TABLE ` + "`table`" + ` (
+  ` + "`id`" + ` int(11) NOT NULL AUTO_INCREMENT,
+  ` + "`tiny_data`" + ` tinyblob,
+  ` + "`medium_data`" + ` mediumblob,
+  ` + "`long_data`" + ` longblob,
+  PRIMARY KEY (` + "`id`" + `)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+				map[string][]string{
+					"table": {"tiny_data", "medium_data", "long_data"},
 				},
 			},
 		},
@@ -604,5 +651,133 @@ func Test_mySQL_dumpsTriggersIgnoresDefiners(t *testing.T) {
 
 	if !strings.Contains(b.String(), "CREATE TRIGGER `ins_sum` BEFORE INSERT ON `account` FOR EACH ROW SET @sum = @sum + NEW.amount;") {
 		t.Error("Trigger not dumped")
+	}
+}
+
+func Test_mySQL_getProperEscapedValue(t *testing.T) {
+	db, _ := getDB(t)
+
+	type args struct {
+		col        *sql.RawBytes
+		table      string
+		columnName string
+		setupFunc  func(*mySQL)
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "nil value returns NULL",
+			args: args{
+				col:        nil,
+				table:      "test_table",
+				columnName: "data",
+				setupFunc:  nil,
+			},
+			want: "NULL",
+		},
+		{
+			name: "binary column with data returns 0x format",
+			args: args{
+				col:        func() *sql.RawBytes { b := sql.RawBytes("hello"); return &b }(),
+				table:      "test_table",
+				columnName: "data",
+				setupFunc: func(d *mySQL) {
+					d.shouldHexBins = true
+					d.mapBins = map[string][]string{
+						"test_table": {"data"},
+					}
+				},
+			},
+			want: "0x68656c6c6f", // "hello" in hex
+		},
+		{
+			name: "binary column with empty data returns NULL",
+			args: args{
+				col:        func() *sql.RawBytes { b := sql.RawBytes(""); return &b }(),
+				table:      "test_table",
+				columnName: "data",
+				setupFunc: func(d *mySQL) {
+					d.shouldHexBins = true
+					d.mapBins = map[string][]string{
+						"test_table": {"data"},
+					}
+				},
+			},
+			want: "NULL",
+		},
+		{
+			name: "blob column with data returns 0x format",
+			args: args{
+				col:        func() *sql.RawBytes { b := sql.RawBytes([]byte{0x01, 0x02, 0x03, 0xff}); return &b }(),
+				table:      "test_table",
+				columnName: "blob_data",
+				setupFunc: func(d *mySQL) {
+					d.shouldHexBins = true
+					d.mapBins = map[string][]string{
+						"test_table": {"blob_data"},
+					}
+				},
+			},
+			want: "0x010203ff",
+		},
+		{
+			name: "non-binary column returns quoted string",
+			args: args{
+				col:        func() *sql.RawBytes { b := sql.RawBytes("hello"); return &b }(),
+				table:      "test_table",
+				columnName: "name",
+				setupFunc: func(d *mySQL) {
+					d.shouldHexBins = true
+					d.mapBins = map[string][]string{
+						"test_table": {"data"}, // different column
+					}
+				},
+			},
+			want: "'hello'",
+		},
+		{
+			name: "shouldHexBins false returns quoted string even for binary column",
+			args: args{
+				col:        func() *sql.RawBytes { b := sql.RawBytes("test"); return &b }(),
+				table:      "test_table",
+				columnName: "data",
+				setupFunc: func(d *mySQL) {
+					d.shouldHexBins = false
+					d.mapBins = map[string][]string{
+						"test_table": {"data"},
+					}
+				},
+			},
+			want: "'test'",
+		},
+		{
+			name: "binary column with special characters",
+			args: args{
+				col:        func() *sql.RawBytes { b := sql.RawBytes([]byte{0x00, 0x01, 0x7f, 0x80, 0xff}); return &b }(),
+				table:      "test_table",
+				columnName: "data",
+				setupFunc: func(d *mySQL) {
+					d.shouldHexBins = true
+					d.mapBins = map[string][]string{
+						"test_table": {"data"},
+					}
+				},
+			},
+			want: "0x00017f80ff",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := getInternalMySQLInstance(db, nil)
+			if tt.args.setupFunc != nil {
+				tt.args.setupFunc(d)
+			}
+			got := d.getProperEscapedValue(tt.args.col, tt.args.table, tt.args.columnName)
+			assert.Equal(t, tt.want, got, "getProperEscapedValue() = %v, want %v", got, tt.want)
+		})
 	}
 }
